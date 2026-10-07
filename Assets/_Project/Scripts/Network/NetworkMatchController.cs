@@ -71,6 +71,8 @@ namespace LiarsBatting.Network
         public event Action<MatchSide, int, int> OnOpponentRevealed;
         public event Action<MatchSide> OnTurnChanged;
         public event Action<MatchSide> OnGameOver;
+        // Fires on the side that did NOT surrender (the surrenderer ends locally).
+        public event Action OnOpponentSurrendered;
         public event Action<string> OnError;
 
         // Rogue: fires on the ATTACKER's client once the defender truthfully
@@ -199,6 +201,11 @@ namespace LiarsBatting.Network
                         break;
 
                     case "finished":
+                        if (FirestoreClient.ReadBool(doc, "surrendered", false))
+                        {
+                            OnOpponentSurrendered?.Invoke();
+                            break;
+                        }
                         string winner = FirestoreClient.ReadString(doc, "winner", "");
                         OnGameOver?.Invoke(winner == "A" ? MatchSide.A : MatchSide.B);
                         break;
@@ -363,6 +370,20 @@ namespace LiarsBatting.Network
         {
             _winner = SideKey(winner);
             var extra = new JObject { ["winner"] = FirestoreClient.StringField(_winner) };
+            WriteBaseDoc("finished", extra);
+        }
+
+        // Ends the match immediately with the other side as the winner. Written
+        // as a normal "finished" action plus a flag, so the opponent can tell it
+        // apart from a guessed-secret win.
+        public void SubmitSurrender()
+        {
+            _winner = SideKey(OtherSide(MySide));
+            var extra = new JObject
+            {
+                ["winner"] = FirestoreClient.StringField(_winner),
+                ["surrendered"] = FirestoreClient.BoolField(true)
+            };
             WriteBaseDoc("finished", extra);
         }
 
