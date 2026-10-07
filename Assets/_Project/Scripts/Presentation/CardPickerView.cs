@@ -4,12 +4,15 @@ using UnityEngine.UI;
 
 namespace LiarsBatting.Presentation
 {
-    // The 0-9 number-card tray used both for picking your secret at setup and
-    // for building a guess during your attack turn. Clicking a tray card COPIES
-    // its digit into the first empty slot (the source card just greys out while
-    // in use); clicking a filled slot DELETES it and frees the tray card again --
-    // exactly the "copy / delete" interaction from the design doc, and it can
-    // never produce a duplicate digit because a used tray card can't be clicked.
+    // The 0-9 number-card tray used both for picking your secret at setup and for building
+    // a guess during your attack turn. Clicking a tray card COPIES its digit into the first
+    // empty slot (the source card just greys out while in use); clicking a filled slot
+    // DELETES it and frees the tray card again -- it can never produce a duplicate digit
+    // because a used tray card can't be clicked.
+    //
+    // Two layouts: the classic stacked one (setup screen) and a split one for the match
+    // HUD where the 4 slots sit in the middle of the screen and the tray + submit button sit
+    // in the right column.
     public class CardPickerView
     {
         public readonly RectTransform Root;
@@ -21,32 +24,64 @@ namespace LiarsBatting.Presentation
 
         private readonly RectTransform[] _slots = new RectTransform[4];
         private readonly Image[] _slotImages = new Image[4];
-
-        // Card art is 5:7. Tints are multiplied over the white card sprite.
-        private const float CardW = 40f, CardH = 56f;
-        private static readonly Color TrayUsedTint = new Color(0.30f, 0.30f, 0.30f, 1f);
-        private static readonly Color TrayDisabledTint = new Color(0.20f, 0.20f, 0.20f, 1f);
         private readonly int[] _slotValues = { -1, -1, -1, -1 };
 
         private readonly Button _submitButton;
         private readonly Action<int[]> _onSubmit;
 
+        private static readonly Color TrayUsedTint = new Color(0.30f, 0.30f, 0.30f, 1f);
+        private static readonly Color TrayDisabledTint = new Color(0.20f, 0.20f, 0.20f, 1f);
+
+        // Classic stacked layout (5:7 cards).
         public CardPickerView(Transform parent, string title, string submitLabel, Action<int[]> onSubmit)
         {
             _onSubmit = onSubmit;
+            var card = new Vector2(40f, 56f);
             Root = UiFactory.VerticalGroup(parent, "CardPicker", spacing: 12);
 
             UiFactory.Text(Root, title, 14, UITheme.Muted, TextAnchor.UpperLeft, FontStyle.Bold);
+            var slotsRow = BuildSlots(Root, card, 10f);
+            UiFactory.SetHeight(slotsRow, card.y);
 
-            var slotsRow = UiFactory.HorizontalGroup(Root, "Slots", spacing: 10, childAlign: TextAnchor.MiddleCenter);
-            UiFactory.SetHeight(slotsRow, CardH);
+            UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제합니다.", 12, UITheme.Muted, TextAnchor.UpperLeft);
+            BuildTray(Root, card, 8f);
+
+            _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16);
+            UiFactory.SetHeight(_submitButton, 44);
+            RefreshSubmitInteractable();
+        }
+
+        // Split layout for the match HUD: slots go into slotsParent, tray + submit into trayParent.
+        public CardPickerView(Transform slotsParent, Transform trayParent, string submitLabel,
+            Action<int[]> onSubmit, Vector2 slotCard, Vector2 trayCard)
+        {
+            _onSubmit = onSubmit;
+
+            var slotsRow = BuildSlots(slotsParent, slotCard, 16f);
+            UiFactory.StretchToFillParent(slotsRow);
+
+            Root = UiFactory.VerticalGroup(trayParent, "TrayColumn", spacing: 8, childAlign: TextAnchor.UpperCenter);
+            UiFactory.StretchToFillParent(Root);
+            var hint = UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제", 12, UITheme.Muted, TextAnchor.MiddleLeft);
+            hint.raycastTarget = false;
+            UiFactory.SetHeight(hint, 16);
+            BuildTray(Root, trayCard, 8f);
+
+            _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16);
+            UiFactory.SetHeight(_submitButton, 40);
+            RefreshSubmitInteractable();
+        }
+
+        private RectTransform BuildSlots(Transform parent, Vector2 card, float spacing)
+        {
+            var row = UiFactory.HorizontalGroup(parent, "Slots", spacing: spacing, childAlign: TextAnchor.MiddleCenter);
             for (int i = 0; i < 4; i++)
             {
                 int index = i;
                 var slotGo = new GameObject($"Slot{i}", typeof(RectTransform), typeof(Image), typeof(Button));
                 var slotRt = (RectTransform)slotGo.transform;
-                slotRt.SetParent(slotsRow, false);
-                UiFactory.SetSize(slotRt, CardW, CardH);
+                slotRt.SetParent(row, false);
+                UiFactory.SetSize(slotRt, card.x, card.y);
                 var img = slotGo.GetComponent<Image>();
                 img.color = UITheme.Surface2;
                 img.preserveAspect = true;
@@ -57,12 +92,17 @@ namespace LiarsBatting.Presentation
                 _slots[i] = slotRt;
                 _slotImages[i] = img;
             }
+            return row;
+        }
 
-            UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제합니다.", 12, UITheme.Muted, TextAnchor.UpperLeft);
+        private RectTransform BuildTray(Transform parent, Vector2 card, float spacing)
+        {
+            var tray = UiFactory.Grid(parent, "Tray", columns: 5, cellSize: card.x, spacing: spacing);
+            var grid = tray.GetComponent<GridLayoutGroup>();
+            grid.cellSize = card;
+            grid.childAlignment = TextAnchor.MiddleCenter;
+            UiFactory.SetHeight(tray, card.y * 2 + spacing);
 
-            var tray = UiFactory.Grid(Root, "Tray", columns: 5, cellSize: 56, spacing: 8);
-            tray.GetComponent<GridLayoutGroup>().cellSize = new Vector2(CardW, CardH);
-            UiFactory.SetHeight(tray, CardH * 2 + 8);
             for (int digit = 0; digit < 10; digit++)
             {
                 int d = digit;
@@ -79,10 +119,7 @@ namespace LiarsBatting.Presentation
                 _trayButtons[d] = btn;
                 _trayImages[d] = img;
             }
-
-            _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16);
-            UiFactory.SetHeight(_submitButton, 44);
-            RefreshSubmitInteractable();
+            return tray;
         }
 
         private void PlaceDigit(int digit)
@@ -140,10 +177,9 @@ namespace LiarsBatting.Presentation
             if (!interactable) _submitButton.interactable = false;
         }
 
-        // A permanently (for this game) disabled digit stays disabled even
-        // through later SetInteractable(true) calls -- used for DemonHunter's
-        // "opponent's pool is 0~8 only" restriction. Pass enabled:true to lift
-        // it again (e.g. when a new game against a non-DemonHunter starts).
+        // A permanently (for this game) disabled digit stays disabled even through later
+        // SetInteractable(true) calls -- used for DemonHunter's "opponent's pool is 0~8 only"
+        // restriction. Pass enabled:true to lift it again.
         public void SetDigitEnabled(int digit, bool enabled)
         {
             _digitDisabled[digit] = !enabled;

@@ -57,6 +57,9 @@ namespace LiarsBatting.Presentation
             tooltipRt.sizeDelta = new Vector2(190, 64);
             tooltipGo.GetComponent<Image>().color = new Color(0.04f, 0.04f, 0.04f, 0.95f);
             _tooltip = tooltipGo;
+            var tooltipCanvas = tooltipGo.AddComponent<Canvas>();   // always above the HUD
+            tooltipCanvas.overrideSorting = true;
+            tooltipCanvas.sortingOrder = 40;
 
             _tooltipText = UiFactory.Text(tooltipRt, "", 11, Color.white, TextAnchor.MiddleCenter);
             var tooltipTextRt = (RectTransform)_tooltipText.transform;

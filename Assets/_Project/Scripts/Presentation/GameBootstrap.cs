@@ -75,7 +75,7 @@ namespace LiarsBatting.Presentation
 
         private CardPickerView _setupPicker;
         private CardPickerView _attackPicker;
-        private StatusPanelView _statusPanel;
+        private MatchHudView _statusPanel;
         private ChoiceOverlayView _choiceOverlay;
         private CountdownTimerView _timer;
         private HeroPortraitView _myHeroPortrait;
@@ -113,6 +113,13 @@ namespace LiarsBatting.Presentation
             _nickname = PlayerPrefs.GetString(EffectiveNicknameKey(), "");
             if (string.IsNullOrEmpty(_nickname)) ShowNicknameScreen();
             else ShowMainMenu();
+        }
+
+        private void Update()
+        {
+            // Label under the hourglass ("내 턴" / "상대 턴") follows the header text.
+            if (_statusPanel != null && _headerText != null)
+                _statusPanel.SetTurnLabel(_headerText.text);
         }
 
         // ---------- layout ----------
@@ -248,14 +255,17 @@ namespace LiarsBatting.Presentation
 
             var aiBtn = UiFactory.Button(centered, "AI 매칭", UITheme.Accent, Color.white, StartAiMatch, 16);
             UiFactory.SetHeight(aiBtn, 52);
+            MenuButtonStyle.Apply(aiBtn, primary: true);
 
             var randomBtn = UiFactory.Button(centered, "랜덤 매칭", UITheme.Surface2, UITheme.Ink,
                 ShowRandomMatchScreen, 16);
             UiFactory.SetHeight(randomBtn, 52);
+            MenuButtonStyle.Apply(randomBtn, primary: false);
 
             var friendBtn = UiFactory.Button(centered, "친구 매칭", UITheme.Surface2, UITheme.Ink,
                 ShowFriendMatchScreen, 16);
             UiFactory.SetHeight(friendBtn, 52);
+            MenuButtonStyle.Apply(friendBtn, primary: false);
 
             var resetBtn = UiFactory.Button(centered, "닉네임 변경", UITheme.Bg, UITheme.Muted, ShowNicknameScreen, 12);
             UiFactory.SetHeight(resetBtn, 30);
@@ -765,53 +775,28 @@ namespace LiarsBatting.Presentation
             rt.offsetMin = Vector2.zero;
             rt.offsetMax = new Vector2(0, -56);
 
-            var outer = UiFactory.VerticalGroup(rt, "Outer", spacing: 0);
-            outer.anchorMin = Vector2.zero;
-            outer.anchorMax = Vector2.one;
-            outer.offsetMin = Vector2.zero;
-            outer.offsetMax = Vector2.zero;
+            // Everything sits on a fixed-size stage (see MatchHudView for the layout).
+            _statusPanel = new MatchHudView(rt, this);
+            var stage = _statusPanel.Stage;
 
-            var heroBar = UiFactory.HorizontalGroup(outer, "HeroBar", spacing: 0,
-                padding: new RectOffset(0, 0, 6, 6), childAlign: TextAnchor.MiddleCenter);
-            heroBar.gameObject.AddComponent<Image>().color = UITheme.Surface;
-            UiFactory.SetHeight(heroBar, 96);
-            // The hero bar used to inherit flexibleHeight 1 from its children, so it split the
-            // spare screen height 50/50 with the body and squeezed the history logs. Give it a
-            // smaller share (0.3 vs the body's 1): raise it for a taller hero area, lower it
-            // (down to 0) for a taller body.
-            UiFactory.SetFlexible(heroBar, 1, 0.3f);
+            _opponentHeroPortrait = new HeroPortraitView(stage, showCharges: false);
+            _statusPanel.PlaceOpponentHero(_opponentHeroPortrait.Root);
 
-            var oppSide = UiFactory.HorizontalGroup(heroBar, "OppSide", spacing: 0, childAlign: TextAnchor.MiddleCenter);
-            UiFactory.SetFlexible(oppSide, 1, 1);
-            _opponentHeroPortrait = new HeroPortraitView(oppSide, showCharges: false);
-
-            var vsText = UiFactory.Text(heroBar, "VS", 20, UITheme.Muted, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.SetSize(vsText, 50, 40);
-
-            var mySide = UiFactory.HorizontalGroup(heroBar, "MySide", spacing: 0, childAlign: TextAnchor.MiddleCenter);
-            UiFactory.SetFlexible(mySide, 1, 1);
-            _myHeroPortrait = new HeroPortraitView(mySide, showCharges: true);
+            _myHeroPortrait = new HeroPortraitView(stage, showCharges: true);
+            _statusPanel.PlaceMyHero(_myHeroPortrait.Root);
             _myHeroPortrait.SetAbilityClickable(OnMyAbilityClicked);
 
-            var body = UiFactory.HorizontalGroup(outer, "Body", spacing: 0);
-            UiFactory.SetFlexible(body, 1, 1);
+            _attackPicker = new CardPickerView(_statusPanel.GuessSlotsHolder, _statusPanel.TrayHolder,
+                "추측 제출", OnPlayerGuessSubmitted, new Vector2(76, 106), new Vector2(64, 86));
 
-            var left = UiFactory.Panel(body, "LeftPane", UITheme.Surface);
-            UiFactory.SetFlexible(left, 1, 1);
-            _statusPanel = new StatusPanelView(left, this);
-
-            var right = UiFactory.Panel(body, "RightPane", UITheme.Bg);
-            UiFactory.SetFlexible(right, 1, 1);
-            var rightInner = UiFactory.VerticalGroup(right, "RightInner", spacing: 12,
-                padding: new RectOffset(18, 18, 18, 18));
-            UiFactory.StretchToFillParent(rightInner);
-
-            _attackPicker = new CardPickerView(rightInner, "내 추리 — 숫자 카드", "추측 제출", OnPlayerGuessSubmitted);
-
-            _priestButton = UiFactory.Button(rightInner, "사제 능력: 한 자리 묻기", UITheme.Clay, Color.white,
+            _priestButton = UiFactory.Button(stage, "사제 능력: 한 자리 묻기", UITheme.Clay, Color.white,
                 ShowPriestPositionPicker, 13);
-            UiFactory.SetHeight(_priestButton, 36);
+            _statusPanel.PlacePriestButton((RectTransform)_priestButton.transform);
             _priestButton.gameObject.SetActive(false);
+
+            // The hourglass shows the countdown during a match (the header badge is hidden).
+            _timer.OnTick = _statusPanel.Hourglass.SetRemaining;
+            _timer.OnStopped = _statusPanel.Hourglass.Idle;
 
             _matchScreen.SetActive(false);
         }
@@ -1000,6 +985,7 @@ namespace LiarsBatting.Presentation
             _heroSelectScreen.SetActive(target == _heroSelectScreen);
             _setupScreen.SetActive(target == _setupScreen);
             _matchScreen.SetActive(target == _matchScreen);
+            _timer.ShowBadge = target != _matchScreen; // the hourglass replaces the header badge in a match
         }
 
         private void ShowNicknameScreen()
@@ -1094,7 +1080,8 @@ namespace LiarsBatting.Presentation
         {
             // The opponent's remaining LIE TOKEN count is exactly the kind of
             // information the game is designed to hide -- only my own is shown.
-            _tokenText.text = $"내 LIE TOKEN {_state.PlayerLieTokens}/2";
+            _tokenText.text = "";
+            _statusPanel.LieTokens.Set(_state.PlayerLieTokens);
         }
 
         private void BeginPlayerAttackTurn()
@@ -1217,7 +1204,7 @@ namespace LiarsBatting.Presentation
         private void BeginAiAttackTurn()
         {
             RefreshTokenHeader();
-            _headerText.text = "상대 턴 — 왼쪽에서 방어 결과를 확인하세요";
+            _headerText.text = "상대 턴 — 방어 결과를 확인하세요";
             _attackPicker.SetInteractable(false);
             RefreshPriestButtonVisibility(false);
 

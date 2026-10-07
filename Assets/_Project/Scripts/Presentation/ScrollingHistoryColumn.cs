@@ -15,6 +15,10 @@ namespace LiarsBatting.Presentation
         private readonly RectTransform _viewportRt;
         private readonly ScrollRect _scrollRect;
 
+        // When set, replaces the "pointer is over the viewport" test for mouse-wheel scrolling
+        // (the hover popup scrolls while its parent box is hovered).
+        public System.Func<bool> HoverOverride;
+
         // ScrollRect's built-in mouse-wheel handling goes through uGUI's
         // IScrollHandler event, which with the New Input System's
         // InputSystemUIInputModule doesn't reliably reach a runtime-built
@@ -71,9 +75,11 @@ namespace LiarsBatting.Presentation
             {
                 yield return null;
                 if (Mouse.current == null) continue;
-                if (!RectTransformUtility.RectangleContainsScreenPoint(
-                        _viewportRt, Mouse.current.position.ReadValue(), null))
-                    continue;
+                bool pointerOver = HoverOverride != null
+                    ? HoverOverride()
+                    : RectTransformUtility.RectangleContainsScreenPoint(
+                        _viewportRt, Mouse.current.position.ReadValue(), null);
+                if (!pointerOver) continue;
 
                 float scrollY = Mouse.current.scroll.ReadValue().y;
                 if (Mathf.Abs(scrollY) < 0.01f) continue;
@@ -98,7 +104,21 @@ namespace LiarsBatting.Presentation
         // logging what the OPPONENT told the player, so a bluff stays a bluff).
         public void AddRow(int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true)
         {
-            var row = UiFactory.HorizontalGroup(_content, "Row", spacing: 6);
+            BuildRow(_content, guess, reported, wasLie, revealLie);
+            Canvas.ForceUpdateCanvases();
+            _scrollRect.verticalNormalizedPosition = 0f;
+        }
+
+        public void ScrollToBottom()
+        {
+            Canvas.ForceUpdateCanvases();
+            _scrollRect.verticalNormalizedPosition = 0f;
+        }
+
+        // Builds one guess row (digits + strike/ball/out badges + optional "거짓" badge) under any parent.
+        public static RectTransform BuildRow(Transform parent, int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true)
+        {
+            var row = UiFactory.HorizontalGroup(parent, "Row", spacing: 6);
             UiFactory.SetHeight(row, 28);
 
             var guessText = UiFactory.Text(row, string.Join(" ", guess), 13, UITheme.Ink, TextAnchor.MiddleLeft);
@@ -117,8 +137,7 @@ namespace LiarsBatting.Presentation
             if (wasLie && revealLie)
                 UiFactory.Badge(row, "거짓", UITheme.ClaySoft, UITheme.Clay);
 
-            Canvas.ForceUpdateCanvases();
-            _scrollRect.verticalNormalizedPosition = 0f;
+            return row;
         }
 
         public void Clear()

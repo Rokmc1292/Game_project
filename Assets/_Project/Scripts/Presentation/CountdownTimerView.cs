@@ -18,6 +18,10 @@ namespace LiarsBatting.Presentation
         private readonly MonoBehaviour _host;
         private Coroutine _routine;
 
+        public Action<float, float> OnTick;   // (remaining, total) every frame while running
+        public Action OnStopped;              // fired when a countdown ends or is cancelled
+        public bool ShowBadge = true;         // false while the hourglass shows the time instead
+
         public CountdownTimerView(Transform parent, MonoBehaviour host)
         {
             _host = host;
@@ -55,11 +59,12 @@ namespace LiarsBatting.Presentation
                 _routine = null;
             }
             _root.SetActive(false);
+            OnStopped?.Invoke();
         }
 
         private IEnumerator Run(float seconds, Action onExpired)
         {
-            _root.SetActive(true);
+            _root.SetActive(ShowBadge);
             float total = seconds;
             float remaining = seconds;
             while (remaining > 0f)
@@ -69,11 +74,13 @@ namespace LiarsBatting.Presentation
                 bool urgent = remaining <= 3f;
                 _fill.GetComponent<Image>().color = urgent ? UITheme.Clay : UITheme.Accent;
                 _text.color = urgent ? UITheme.Clay : UITheme.Ink;
+                OnTick?.Invoke(Mathf.Max(0f, remaining), total);
                 yield return null;
                 remaining -= Time.deltaTime;
             }
             _routine = null;
             _root.SetActive(false);
+            OnStopped?.Invoke();
             onExpired?.Invoke();
         }
     }
