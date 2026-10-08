@@ -20,6 +20,8 @@ namespace LiarsBatting.Presentation
 
         public Action<float, float> OnTick;   // (remaining, total) every frame while running
         public Action OnStopped;              // fired when a countdown ends or is cancelled
+        private static readonly Color Brass = new Color32(214, 160, 70, 255);
+
         public bool ShowBadge = true;         // false while the hourglass shows the time instead
 
         public CountdownTimerView(Transform parent, MonoBehaviour host)
@@ -32,7 +34,7 @@ namespace LiarsBatting.Presentation
 
             var track = UiFactory.Panel(wrap, "TimerTrack", UITheme.Surface2);
             UiFactory.SetSize(track, 70, 10);
-            _fill = UiFactory.Panel(track, "TimerFill", UITheme.Accent);
+            _fill = UiFactory.Panel(track, "TimerFill", Brass);
             _fill.anchorMin = new Vector2(0, 0);
             _fill.anchorMax = new Vector2(1, 1);
             _fill.offsetMin = Vector2.zero;
@@ -72,7 +74,7 @@ namespace LiarsBatting.Presentation
                 _text.text = Mathf.CeilToInt(remaining).ToString();
                 _fill.localScale = new Vector3(Mathf.Clamp01(remaining / total), 1f, 1f);
                 bool urgent = remaining <= 3f;
-                _fill.GetComponent<Image>().color = urgent ? UITheme.Clay : UITheme.Accent;
+                _fill.GetComponent<Image>().color = urgent ? UITheme.Clay : Brass;
                 _text.color = urgent ? UITheme.Clay : UITheme.Ink;
                 OnTick?.Invoke(Mathf.Max(0f, remaining), total);
                 yield return null;

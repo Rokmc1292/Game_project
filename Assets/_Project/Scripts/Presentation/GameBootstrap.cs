@@ -623,34 +623,45 @@ namespace LiarsBatting.Presentation
 
             UiFactory.Text(centered, "영웅을 선택하세요", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
 
-            var grid = UiFactory.Grid(centered, "HeroGrid", columns: 4, cellSize: 150, spacing: 14);
-            UiFactory.SetHeight(grid, 150 * 2 + 14); // 7 heroes over 4 columns = 2 rows
+            var grid = UiFactory.Grid(centered, "HeroGrid", columns: 4, cellSize: 180, spacing: 16);
+            var gridLayout = grid.GetComponent<GridLayoutGroup>();
+            gridLayout.cellSize = new Vector2(180, 226);
+            gridLayout.childAlignment = TextAnchor.UpperCenter;      // keep the cards centred on screen
+            UiFactory.SetHeight(grid, 226 * 2 + 16);                 // 7 heroes over 4 columns = 2 rows
 
+            var brass = new Color32(214, 160, 70, 255);
             foreach (var info in HeroCatalog.All)
             {
                 var heroId = info.Id;
                 var cardGo = new GameObject($"Hero_{heroId}", typeof(RectTransform), typeof(Image), typeof(Button));
                 cardGo.transform.SetParent(grid, false);
                 var img = cardGo.GetComponent<Image>();
-                img.color = UITheme.Surface2;
+                img.color = UITheme.Surface2;                        // fallback if the plate sprites are missing
                 var btn = cardGo.GetComponent<Button>();
                 btn.targetGraphic = img;
                 btn.onClick.AddListener(() => OnHeroChosen(heroId));
                 _heroSelectButtons.Add(btn);
 
-                var inner = UiFactory.VerticalGroup(cardGo.transform, "Inner", spacing: 4,
-                    padding: new RectOffset(6, 6, 10, 8), childAlign: TextAnchor.UpperCenter);
+                var inner = UiFactory.VerticalGroup(cardGo.transform, "Inner", spacing: 5,
+                    padding: new RectOffset(12, 12, 16, 10), childAlign: TextAnchor.UpperCenter);
                 UiFactory.StretchToFillParent(inner);
 
                 var portraitGo = new GameObject("Portrait", typeof(RectTransform), typeof(Image));
                 portraitGo.transform.SetParent(inner, false);
-                UiFactory.SetSize(portraitGo.transform, 78, 78);
+                UiFactory.SetSize(portraitGo.transform, 108, 108);
                 var portraitImg = portraitGo.GetComponent<Image>();
                 portraitImg.sprite = Resources.Load<Sprite>($"Heroes/Hero_{heroId}_Portrait");
                 portraitImg.preserveAspect = true;
+                portraitImg.raycastTarget = false;
 
-                UiFactory.Text(inner, info.Name, 14, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-                UiFactory.Text(inner, info.AbilityName, 10, UITheme.Muted, TextAnchor.MiddleCenter);
+                var nameText = UiFactory.Text(inner, info.Name, 17, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+                nameText.raycastTarget = false;
+                var abilityText = UiFactory.Text(inner, info.AbilityName, 12, brass, TextAnchor.MiddleCenter, FontStyle.Bold);
+                abilityText.raycastTarget = false;
+                var descText = UiFactory.Text(inner, info.AbilityDescription, 11, UITheme.Muted, TextAnchor.UpperCenter);
+                descText.raycastTarget = false;
+
+                MenuButtonStyle.ApplyChoice(btn, UITheme.Accent);    // same charcoal plate / brass hover as the choice popups
             }
         }
 

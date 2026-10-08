@@ -32,22 +32,28 @@ namespace LiarsBatting.Presentation
         private static readonly Color TrayUsedTint = new Color(0.30f, 0.30f, 0.30f, 1f);
         private static readonly Color TrayDisabledTint = new Color(0.20f, 0.20f, 0.20f, 1f);
 
-        // Classic stacked layout (5:7 cards).
+        // Classic stacked layout (secret-pick screen): centred, bigger 5:7 cards.
         public CardPickerView(Transform parent, string title, string submitLabel, Action<int[]> onSubmit)
         {
             _onSubmit = onSubmit;
-            var card = new Vector2(40f, 56f);
-            Root = UiFactory.VerticalGroup(parent, "CardPicker", spacing: 12);
+            var slotCard = new Vector2(64f, 90f);
+            var trayCard = new Vector2(56f, 78f);
+            Root = UiFactory.VerticalGroup(parent, "CardPicker", spacing: 14, childAlign: TextAnchor.UpperCenter);
 
-            UiFactory.Text(Root, title, 14, UITheme.Muted, TextAnchor.UpperLeft, FontStyle.Bold);
-            var slotsRow = BuildSlots(Root, card, 10f);
-            UiFactory.SetHeight(slotsRow, card.y);
+            UiFactory.Text(Root, title, 15, UITheme.Muted, TextAnchor.MiddleCenter, FontStyle.Bold);
+            var slotsRow = BuildSlots(Root, slotCard, 14f);
+            UiFactory.SetHeight(slotsRow, slotCard.y);
+            UiFactory.SetFlexible(slotsRow, 1, 0);   // otherwise the row soaks up spare height and the slots turn into tall bars
 
-            UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제합니다.", 12, UITheme.Muted, TextAnchor.UpperLeft);
-            BuildTray(Root, card, 8f);
+            UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제합니다.", 12, UITheme.Muted, TextAnchor.MiddleCenter);
+            BuildTray(Root, trayCard, 10f);
 
-            _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16);
-            UiFactory.SetHeight(_submitButton, 44);
+            var submitRow = UiFactory.HorizontalGroup(Root, "SubmitRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(submitRow, 52);
+            UiFactory.SetFlexible(submitRow, 1, 0);
+            _submitButton = UiFactory.Button(submitRow, submitLabel, UITheme.Accent, Color.white, Submit, 17);
+            UiFactory.SetSize(_submitButton, 300, 52);
+            MenuButtonStyle.ApplyChoice(_submitButton, UITheme.Accent);
             RefreshSubmitInteractable();
         }
 
@@ -69,6 +75,7 @@ namespace LiarsBatting.Presentation
 
             _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16);
             UiFactory.SetHeight(_submitButton, 40);
+            MenuButtonStyle.ApplyChoice(_submitButton, UITheme.Accent);
             RefreshSubmitInteractable();
         }
 

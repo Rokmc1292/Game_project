@@ -28,11 +28,16 @@ namespace LiarsBatting.Presentation
             box.anchorMax = new Vector2(0.88f, 0.7f);
             box.offsetMin = Vector2.zero;
             box.offsetMax = Vector2.zero;
-            box.gameObject.AddComponent<Image>().color = UITheme.Bg;
+            var boxImage = box.gameObject.AddComponent<Image>();
+            boxImage.color = UITheme.Bg;
+            MenuButtonStyle.ApplyPanel(boxImage);
 
             _message = UiFactory.Text(box, "", 16, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
             _buttonRow = UiFactory.HorizontalGroup(box, "Buttons", spacing: 10, childAlign: TextAnchor.MiddleCenter);
-            UiFactory.SetHeight(_buttonRow, 44);
+            UiFactory.SetHeight(_buttonRow, 52);
+            // Without this the row (a HorizontalGroup, flexible by default) soaks up all the spare
+            // height of the tall message box and stretches every button into a tall block.
+            UiFactory.SetFlexible(_buttonRow, 1, 0);
 
             _root.SetActive(false);
         }
@@ -61,11 +66,13 @@ namespace LiarsBatting.Presentation
             foreach (var option in options)
             {
                 var onClick = option.onClick;
-                UiFactory.Button(_buttonRow, option.label, option.color, Color.white, () =>
+                var button = UiFactory.Button(_buttonRow, option.label, option.color, Color.white, () =>
                 {
                     _root.SetActive(false);
                     onClick?.Invoke();
-                }, 13);
+                }, 15);
+                UiFactory.SetSize(button, Mathf.Max(130f, option.label.Length * 11f + 64f), 48f);
+                MenuButtonStyle.ApplyChoice(button, option.color);
             }
             _root.SetActive(true);
             _root.transform.SetAsLastSibling();
