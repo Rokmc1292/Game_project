@@ -84,7 +84,6 @@ namespace LiarsBatting.Presentation
 
         private Text _headerText;
         private Text _tokenText;
-        private Button _surrenderButton;
         private Text _gameOverText;
         private Text _menuGreetingText;
 
@@ -146,10 +145,6 @@ namespace LiarsBatting.Presentation
             _timer = new CountdownTimerView(row, this);
             _tokenText = UiFactory.Text(row, "", 13, UITheme.Muted, TextAnchor.MiddleRight);
             UiFactory.SetSize(_tokenText, 220, 30);
-
-            _surrenderButton = UiFactory.Button(row, "항복", UITheme.Clay, Color.white, OnSurrenderClicked, 13);
-            UiFactory.SetSize(_surrenderButton, 70, 30);
-            _surrenderButton.gameObject.SetActive(false); // only shown while a match is actually underway
         }
 
         private GameObject BuildFullScreenContainer(Transform root, string name)
@@ -260,7 +255,7 @@ namespace LiarsBatting.Presentation
 
             var aiBtn = UiFactory.Button(centered, "AI 매칭", UITheme.Accent, Color.white, StartAiMatch, 16);
             UiFactory.SetHeight(aiBtn, 52);
-            MenuButtonStyle.Apply(aiBtn, primary: true);
+            MenuButtonStyle.Apply(aiBtn, primary: false); // no always-on highlight: the amber border shows on hover only
 
             var randomBtn = UiFactory.Button(centered, "랜덤 매칭", UITheme.Surface2, UITheme.Ink,
                 ShowRandomMatchScreen, 16);
@@ -464,7 +459,6 @@ namespace LiarsBatting.Presentation
 
             _network.OnBothSecretsReady += () =>
             {
-                _surrenderButton.gameObject.SetActive(true);
                 RefreshTokenHeader();
                 UpdateOnlineTurnUI();
             };
@@ -522,8 +516,6 @@ namespace LiarsBatting.Presentation
             _network.OnTurnChanged += _ => UpdateOnlineTurnUI();
 
             _network.OnGameOver += winner => EndOnlineGame(winner == _network.MySide);
-            _network.OnOpponentSurrendered += () =>
-                EndOnlineGame(true, $"승리! {_network.OpponentNickname}님이 항복했습니다.");
 
             _network.OnError += error => ShowFriendStatus(error, true); // surfaces even off the friend screen; harmless no-op UI otherwise
 
@@ -606,14 +598,13 @@ namespace LiarsBatting.Presentation
             _network.SubmitGuess(guess, keepTurn);
         }
 
-        private void EndOnlineGame(bool won, string message = null)
+        private void EndOnlineGame(bool won)
         {
             _timer.Stop();
             _network?.Stop();
-            _surrenderButton.gameObject.SetActive(false);
-            _gameOverText.text = message ?? (won
+            _gameOverText.text = won
                 ? "승리! 상대 비밀번호를 정확히 맞혔습니다."
-                : $"패배. 내 비밀번호 {string.Join(" ", _state.PlayerSecret)}를 들켰습니다.");
+                : $"패배. 내 비밀번호 {string.Join(" ", _state.PlayerSecret)}를 들켰습니다.";
             _gameOverScreen.SetActive(true);
         }
 
@@ -632,8 +623,8 @@ namespace LiarsBatting.Presentation
 
             UiFactory.Text(centered, "영웅을 선택하세요", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
 
-            var grid = UiFactory.Grid(centered, "HeroGrid", columns: 4, cellSize: 170, spacing: 14);
-            UiFactory.SetHeight(grid, 170 * 2 + 14); // 7 heroes over 4 columns = 2 rows
+            var grid = UiFactory.Grid(centered, "HeroGrid", columns: 4, cellSize: 150, spacing: 14);
+            UiFactory.SetHeight(grid, 150 * 2 + 14); // 7 heroes over 4 columns = 2 rows
 
             foreach (var info in HeroCatalog.All)
             {
@@ -653,43 +644,13 @@ namespace LiarsBatting.Presentation
 
                 var portraitGo = new GameObject("Portrait", typeof(RectTransform), typeof(Image));
                 portraitGo.transform.SetParent(inner, false);
-                UiFactory.SetSize(portraitGo.transform, 84, 102); // portrait art is a 512x620 arch
+                UiFactory.SetSize(portraitGo.transform, 78, 78);
                 var portraitImg = portraitGo.GetComponent<Image>();
                 portraitImg.sprite = Resources.Load<Sprite>($"Heroes/Hero_{heroId}_Portrait");
                 portraitImg.preserveAspect = true;
 
                 UiFactory.Text(inner, info.Name, 14, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
                 UiFactory.Text(inner, info.AbilityName, 10, UITheme.Muted, TextAnchor.MiddleCenter);
-
-                // Hover tooltip with the full ability text. A child of the card (not
-                // of the grid), so the GridLayoutGroup doesn't try to lay it out.
-                var tooltipGo = new GameObject("Tooltip", typeof(RectTransform), typeof(Image));
-                tooltipGo.transform.SetParent(cardGo.transform, false);
-                var tooltipRt = (RectTransform)tooltipGo.transform;
-                tooltipRt.anchorMin = new Vector2(0.5f, 0f);
-                tooltipRt.anchorMax = new Vector2(0.5f, 0f);
-                tooltipRt.pivot = new Vector2(0.5f, 1f);
-                tooltipRt.anchoredPosition = new Vector2(0, -6);
-                tooltipRt.sizeDelta = new Vector2(190, 84);
-                var tooltipImg = tooltipGo.GetComponent<Image>();
-                tooltipImg.color = new Color(0.04f, 0.04f, 0.04f, 0.95f);
-                tooltipImg.raycastTarget = false;
-                var tooltipCanvas = tooltipGo.AddComponent<Canvas>();   // above neighbouring cards
-                tooltipCanvas.overrideSorting = true;
-                tooltipCanvas.sortingOrder = 40;
-                var tooltipText = UiFactory.Text(tooltipRt, $"{info.AbilityName}\n{info.AbilityDescription}", 11,
-                    Color.white, TextAnchor.MiddleCenter);
-                tooltipText.raycastTarget = false;
-                var tooltipTextRt = (RectTransform)tooltipText.transform;
-                tooltipTextRt.anchorMin = Vector2.zero;
-                tooltipTextRt.anchorMax = Vector2.one;
-                tooltipTextRt.offsetMin = new Vector2(8, 6);
-                tooltipTextRt.offsetMax = new Vector2(-8, -6);
-                tooltipGo.SetActive(false);
-
-                var hover = cardGo.AddComponent<HoverTrigger>();
-                hover.OnEnter = () => tooltipGo.SetActive(true);
-                hover.OnExit = () => tooltipGo.SetActive(false);
             }
         }
 
@@ -1025,28 +986,6 @@ namespace LiarsBatting.Presentation
             _setupScreen.SetActive(target == _setupScreen);
             _matchScreen.SetActive(target == _matchScreen);
             _timer.ShowBadge = target != _matchScreen; // the hourglass replaces the header badge in a match
-            _surrenderButton.gameObject.SetActive(false); // re-shown once the match actually starts
-        }
-
-        private void OnSurrenderClicked()
-        {
-            _choiceOverlay.ShowMixed("정말 항복하시겠습니까?\n항복하면 패배로 처리됩니다.",
-                ("항복", UITheme.Clay, Surrender),
-                ("계속 플레이", UITheme.Accent, () => { }));
-        }
-
-        private void Surrender()
-        {
-            const string message = "항복했습니다. 패배로 처리됩니다.";
-            if (_isOnlineMatch)
-            {
-                _network.SubmitSurrender();
-                EndOnlineGame(false, message);
-            }
-            else
-            {
-                EndGame(false, message);
-            }
         }
 
         private void ShowNicknameScreen()
@@ -1093,7 +1032,6 @@ namespace LiarsBatting.Presentation
             _state.PlayerSecret = playerSecret;
 
             ShowOnly(_matchScreen);
-            _surrenderButton.gameObject.SetActive(true);
             _myHeroPortrait.SetHero(_state.PlayerHero, _state.PlayerAbilityCharges);
             _opponentHeroPortrait.SetHero(_state.AiHero);
             RefreshAbilityIconClickability();
@@ -1554,13 +1492,12 @@ namespace LiarsBatting.Presentation
             _timer.Start(TrustChoiceSeconds, ResolveTrust);
         }
 
-        private void EndGame(bool playerWon, string message = null)
+        private void EndGame(bool playerWon)
         {
             _timer.Stop();
-            _surrenderButton.gameObject.SetActive(false);
-            _gameOverText.text = message ?? (playerWon
+            _gameOverText.text = playerWon
                 ? $"승리! 상대 비밀번호는 {string.Join(" ", _state.AiSecret)} 였습니다."
-                : $"패배. 내 비밀번호 {string.Join(" ", _state.PlayerSecret)}를 들켰습니다.");
+                : $"패배. 내 비밀번호 {string.Join(" ", _state.PlayerSecret)}를 들켰습니다.";
             _gameOverScreen.SetActive(true);
         }
     }

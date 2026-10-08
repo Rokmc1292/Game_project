@@ -5,18 +5,18 @@ using LiarsBatting.Core;
 
 namespace LiarsBatting.Presentation
 {
-    // A hero badge: the character portrait, name, and remaining ability
-    // charges. Used twice per match (mine and the opponent's) -- only "mine"
-    // shows remaining charges, since how much of a resource the opponent has
-    // left is exactly the kind of thing this game hides (same reasoning as the
-    // LIE TOKEN count). The ability's name/description isn't printed
-    // permanently -- hovering the portrait shows it instead, and for heroes
-    // whose ability is a single click (Paladin/Warrior/Wizard) clicking the
-    // portrait is also what uses it.
+    // A Hearthstone-style hero badge: circular portrait, name, and the ability
+    // icon below it. Used twice per match (mine and the opponent's) -- only
+    // "mine" shows remaining ability charges, since how much of a resource the
+    // opponent has left is exactly the kind of thing this game hides (same
+    // reasoning as the LIE TOKEN count). The ability's name/description isn't
+    // printed permanently (that ate the vertical space the match screen needs
+    // for history) -- hovering the ability icon shows it instead.
     public class HeroPortraitView
     {
         public readonly RectTransform Root;
         private readonly Image _portraitImage;
+        private readonly Image _abilityImage;
         private readonly Text _nameText;
         private readonly Text _chargesText;
         private readonly GameObject _tooltip;
@@ -29,44 +29,46 @@ namespace LiarsBatting.Presentation
             _showCharges = showCharges;
             Root = UiFactory.VerticalGroup(parent, "HeroPortrait", spacing: 3, childAlign: TextAnchor.UpperCenter);
 
-            // The art is a 512x620 arch, so keep that aspect.
             var portraitGo = new GameObject("Portrait", typeof(RectTransform), typeof(Image));
             portraitGo.transform.SetParent(Root, false);
-            UiFactory.SetSize(portraitGo.transform, 76, 92);
+            UiFactory.SetSize(portraitGo.transform, 60, 60);
             _portraitImage = portraitGo.GetComponent<Image>();
             _portraitImage.preserveAspect = true;
 
             _nameText = UiFactory.Text(Root, "", 12, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+
+            var abilityGo = new GameObject("Ability", typeof(RectTransform), typeof(Image));
+            abilityGo.transform.SetParent(Root, false);
+            UiFactory.SetSize(abilityGo.transform, 32, 32);
+            _abilityImage = abilityGo.GetComponent<Image>();
+            _abilityImage.preserveAspect = true;
+
             _chargesText = UiFactory.Text(Root, "", 10, UITheme.Accent, TextAnchor.MiddleCenter, FontStyle.Bold);
 
-            // Tooltip: a child of the portrait itself, so it needs no screen-
-            // space math -- anchored to the portrait's right side (the portraits
-            // sit near the top/bottom edges, where "above" or "below" would clip).
+            // Tooltip: a child of the ability icon itself, so it needs no screen-
+            // space math -- just anchor it above the icon and toggle visibility.
             var tooltipGo = new GameObject("Tooltip", typeof(RectTransform), typeof(Image));
-            tooltipGo.transform.SetParent(portraitGo.transform, false);
+            tooltipGo.transform.SetParent(abilityGo.transform, false);
             var tooltipRt = (RectTransform)tooltipGo.transform;
-            tooltipRt.anchorMin = new Vector2(1f, 0.5f);
-            tooltipRt.anchorMax = new Vector2(1f, 0.5f);
-            tooltipRt.pivot = new Vector2(0f, 0.5f);
-            tooltipRt.anchoredPosition = new Vector2(8, 0);
-            tooltipRt.sizeDelta = new Vector2(190, 78);
-            var tooltipImage = tooltipGo.GetComponent<Image>();
-            tooltipImage.color = new Color(0.04f, 0.04f, 0.04f, 0.95f);
-            tooltipImage.raycastTarget = false;
+            tooltipRt.anchorMin = new Vector2(0.5f, 1f);
+            tooltipRt.anchorMax = new Vector2(0.5f, 1f);
+            tooltipRt.pivot = new Vector2(0.5f, 0f);
+            tooltipRt.anchoredPosition = new Vector2(0, 8);
+            tooltipRt.sizeDelta = new Vector2(190, 64);
+            tooltipGo.GetComponent<Image>().color = new Color(0.04f, 0.04f, 0.04f, 0.95f);
             _tooltip = tooltipGo;
             var tooltipCanvas = tooltipGo.AddComponent<Canvas>();   // always above the HUD
             tooltipCanvas.overrideSorting = true;
             tooltipCanvas.sortingOrder = 40;
 
             _tooltipText = UiFactory.Text(tooltipRt, "", 11, Color.white, TextAnchor.MiddleCenter);
-            _tooltipText.raycastTarget = false;
             var tooltipTextRt = (RectTransform)_tooltipText.transform;
             tooltipTextRt.anchorMin = Vector2.zero;
             tooltipTextRt.anchorMax = Vector2.one;
             tooltipTextRt.offsetMin = new Vector2(8, 6);
             tooltipTextRt.offsetMax = new Vector2(-8, -6);
 
-            var hover = portraitGo.AddComponent<HoverTrigger>();
+            var hover = abilityGo.AddComponent<HoverTrigger>();
             hover.OnEnter = () => { _tooltip.transform.SetAsLastSibling(); _tooltip.SetActive(true); };
             hover.OnExit = () => _tooltip.SetActive(false);
             _tooltip.SetActive(false);
@@ -78,6 +80,7 @@ namespace LiarsBatting.Presentation
             _nameText.text = info.Name;
             _tooltipText.text = $"{info.AbilityName}\n{info.AbilityDescription}";
             _portraitImage.sprite = Resources.Load<Sprite>($"Heroes/Hero_{hero}_Portrait");
+            _abilityImage.sprite = Resources.Load<Sprite>($"Heroes/Hero_{hero}_Ability");
 
             if (_showCharges && info.Charges > 0)
                 RefreshCharges(charges, info.Charges);
@@ -94,15 +97,12 @@ namespace LiarsBatting.Presentation
             if (_showCharges) _chargesText.text = $"{remaining}/{max}회";
         }
 
-        // Lets the portrait itself act as the "use ability" button. No color
-        // tint on press/disabled: the portrait is the hero's face, it shouldn't
-        // go gray just because this hero's ability isn't click-driven.
+        // Lets the ability icon itself act as the "use ability" button.
         public void SetAbilityClickable(Action onClick)
         {
-            _abilityButton = _portraitImage.gameObject.GetComponent<Button>();
-            if (_abilityButton == null) _abilityButton = _portraitImage.gameObject.AddComponent<Button>();
-            _abilityButton.transition = Selectable.Transition.None;
-            _abilityButton.targetGraphic = _portraitImage;
+            _abilityButton = _abilityImage.gameObject.GetComponent<Button>();
+            if (_abilityButton == null) _abilityButton = _abilityImage.gameObject.AddComponent<Button>();
+            _abilityButton.targetGraphic = _abilityImage;
             _abilityButton.onClick.RemoveAllListeners();
             if (onClick != null) _abilityButton.onClick.AddListener(() => onClick());
         }

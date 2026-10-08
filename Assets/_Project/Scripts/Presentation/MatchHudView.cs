@@ -22,8 +22,8 @@ namespace LiarsBatting.Presentation
     // y grows downward):
     //   top centre  : opponent's revealed digits          left   : hourglass + whose turn
     //   middle      : the digits I'm about to submit      lower-left: my LIE TOKEN coins + hero
-    //   bottom      : my secret (small) + my revealed     right  : guess logs (hover = full
-    //                                                              history), 0-9 tray, submit
+    //   bottom      : my secret (small) + my revealed     right  : two history buttons (hover =
+    //                                                              full history), 0-9 tray, submit
     // Keeps the member names the rest of the game already uses (MyRevealed, OpponentRevealed,
     // MyAttackHistory, OpponentAttackHistory, ShowMySecret).
     public class MatchHudView
@@ -57,7 +57,7 @@ namespace LiarsBatting.Presentation
 
             // right column backdrop (guess logs + tray + submit)
             var rightPanel = UiFactory.Panel(Stage, "RightPanel", UITheme.Bg);
-            Place(rightPanel, 876, 136, 388, 520);
+            Place(rightPanel, 876, 300, 388, 356);
 
             OpponentRevealed = new RevealedDigitsRow(Stage, 76, 106, 16);
             Place(OpponentRevealed.Root, 464, 16, 352, 106);
@@ -81,10 +81,13 @@ namespace LiarsBatting.Presentation
             Place(MyRevealed.Root, 464, 524, 352, 106);
             Label("공개된 내 숫자", 464, 632, 352, 18, 12, UITheme.Muted, TextAnchor.MiddleCenter);
 
-            MyAttackHistory = new HistoryHoverView(Stage, "나의 추측 기록 (상대 응답)", host);
-            Place(MyAttackHistory.Root, 888, 148, 364, 98);
-            OpponentAttackHistory = new HistoryHoverView(Stage, "상대의 추측 기록 (내 판정)", host);
-            Place(OpponentAttackHistory.Root, 888, 254, 364, 98);
+            // Two small buttons above the tray; hover = full history pops up above them.
+            MyAttackHistory = new HistoryHoverView(Stage, "나의 추측 기록", "나의 추측 기록 (상대 응답)", host,
+                popupAlignRight: false);
+            Place(MyAttackHistory.Root, 888, 312, 176, 40);
+            OpponentAttackHistory = new HistoryHoverView(Stage, "상대의 추측 기록", "상대의 추측 기록 (내 판정)", host,
+                popupAlignRight: true);
+            Place(OpponentAttackHistory.Root, 1076, 312, 176, 40);
 
             TrayHolder = NewRect("Tray");
             Place(TrayHolder, 888, 362, 364, 258);

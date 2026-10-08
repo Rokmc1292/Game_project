@@ -1,65 +1,70 @@
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using LiarsBatting.Core;
 
 namespace LiarsBatting.Presentation
 {
-    // A compact guess log: shows only the most recent few rows in a small box. Hovering
-    // the box pops up the complete, scrollable history next to it. Exposes the same
-    // AddRow / Clear calls the old always-open ScrollingHistoryColumn had.
+    // A small iron-plate button ("나의 추측 기록 (3)"). Hovering it pops up the complete,
+    // scrollable guess history above the button. Exposes the same AddRow / Clear calls the
+    // old always-open ScrollingHistoryColumn had.
     public class HistoryHoverView
     {
         public readonly RectTransform Root;
 
-        private struct Record
-        {
-            public int[] Guess;
-            public JudgeResult Reported;
-            public bool WasLie;
-            public bool RevealLie;
-        }
-
-        private readonly List<Record> _records = new List<Record>();
-        private readonly RectTransform _recent;
+        private readonly string _label;
+        private readonly Text _labelText;
         private readonly ScrollingHistoryColumn _full;
         private readonly GameObject _popup;
-        private readonly int _recentCount;
+        private int _count;
         private bool _hovered;
 
-        public HistoryHoverView(Transform parent, string label, MonoBehaviour host, int recentCount = 2)
+        // popupAlignRight: the popup's right edge lines up with the button's right edge
+        // (use it for a button on the right side so the popup stays on screen).
+        public HistoryHoverView(Transform parent, string label, string popupTitle, MonoBehaviour host,
+            bool popupAlignRight = false)
         {
-            _recentCount = recentCount;
+            _label = label;
 
-            Root = UiFactory.Panel(parent, "HistoryBox", UITheme.Surface);
-            var col = UiFactory.VerticalGroup(Root, "Col", spacing: 4, padding: new RectOffset(10, 10, 6, 6));
-            UiFactory.StretchToFillParent(col);
-            UiFactory.Text(col, label, 12, UITheme.Muted, TextAnchor.UpperLeft, FontStyle.Bold);
-            _recent = UiFactory.VerticalGroup(col, "Recent", spacing: 2);
+            var go = new GameObject("HistoryButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            Root = (RectTransform)go.transform;
+            Root.SetParent(parent, false);
+            var image = go.GetComponent<Image>();
+            image.color = UITheme.Surface;                  // fallback if the plate sprites are missing
+            go.GetComponent<Button>().targetGraphic = image;
 
-            // Popup: a child of the box so hovering the popup itself keeps it open. It gets its
-            // own sorting override (and raycaster) so it always draws above the rest of the HUD.
+            _labelText = UiFactory.Text(Root, label, 13, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            _labelText.raycastTarget = false;
+            var labelRt = (RectTransform)_labelText.transform;
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = new Vector2(30, 4);
+            labelRt.offsetMax = new Vector2(-30, -4);
+            MenuButtonStyle.Apply(go.GetComponent<Button>(), primary: false);
+
+            // Popup: a child of the button, so hovering the popup itself keeps it open. It gets
+            // its own sorting override (and raycaster) so it always draws above the HUD.
             _popup = new GameObject("FullHistoryPopup", typeof(RectTransform), typeof(Image));
             var popupRt = (RectTransform)_popup.transform;
             popupRt.SetParent(Root, false);
-            popupRt.anchorMin = new Vector2(0, 1);
-            popupRt.anchorMax = new Vector2(0, 1);
-            popupRt.pivot = new Vector2(1, 1);
-            popupRt.anchoredPosition = new Vector2(-8, 0);
-            popupRt.sizeDelta = new Vector2(330, 280);
+            float ax = popupAlignRight ? 1f : 0f;
+            popupRt.anchorMin = new Vector2(ax, 1);
+            popupRt.anchorMax = new Vector2(ax, 1);
+            popupRt.pivot = new Vector2(ax, 0);
+            popupRt.anchoredPosition = new Vector2(0, 6);
+            popupRt.sizeDelta = new Vector2(364, 280);
             _popup.GetComponent<Image>().color = new Color(0.05f, 0.05f, 0.045f, 0.97f);
             var canvas = _popup.AddComponent<Canvas>();
             canvas.overrideSorting = true;
             canvas.sortingOrder = 30;
             _popup.AddComponent<GraphicRaycaster>();
 
-            _full = new ScrollingHistoryColumn(popupRt, "전체 기록 — " + label, host);
+            _full = new ScrollingHistoryColumn(popupRt, popupTitle, host);
             UiFactory.StretchToFillParent(_full.Root);
             _full.Root.offsetMin = new Vector2(8, 8);
             _full.Root.offsetMax = new Vector2(-8, -8);
             _full.HoverOverride = () => _hovered;
 
-            var hover = Root.gameObject.AddComponent<HoverTrigger>();
+            var hover = go.AddComponent<HoverTrigger>();
             hover.OnEnter = () =>
             {
                 _hovered = true;
@@ -78,31 +83,20 @@ namespace LiarsBatting.Presentation
         public void AddRow(int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true)
         {
             _full.AddRow(guess, reported, wasLie, revealLie);
-            _records.Add(new Record { Guess = guess, Reported = reported, WasLie = wasLie, RevealLie = revealLie });
-            RefreshRecent();
+            _count++;
+            RefreshLabel();
         }
 
         public void Clear()
         {
             _full.Clear();
-            _records.Clear();
-            RefreshRecent();
+            _count = 0;
+            RefreshLabel();
         }
 
-        private void RefreshRecent()
+        private void RefreshLabel()
         {
-            for (int i = _recent.childCount - 1; i >= 0; i--)
-            {
-                var child = _recent.GetChild(i).gameObject;
-                child.SetActive(false);          // leave the layout immediately; Destroy is end-of-frame
-                Object.Destroy(child);
-            }
-            int start = Mathf.Max(0, _records.Count - _recentCount);
-            for (int i = start; i < _records.Count; i++)
-            {
-                var r = _records[i];
-                ScrollingHistoryColumn.BuildRow(_recent, r.Guess, r.Reported, r.WasLie, r.RevealLie);
-            }
+            _labelText.text = _count > 0 ? $"{_label} ({_count})" : _label;
         }
     }
 }
