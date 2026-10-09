@@ -34,6 +34,11 @@ namespace LiarsBatting.Presentation
         private const float DefendChoiceSeconds = 10f;
         private const float TrustChoiceSeconds = 10f;
 
+        // Single-player pacing: short beats so the opponent doesn't answer / attack instantly.
+        private const float AiJudgeDelaySeconds = 1.2f;       // opponent "judging" my guess
+        private const float AiGuessDelaySeconds = 1.8f;       // opponent "thinking" before its guess arrives
+        private const float TurnHandoverDelaySeconds = 0.9f;  // pause before my own turn starts again
+
         // ParrelSync clones share the ORIGINAL project's Editor PlayerPrefs by
         // default (same company/product name), so without this both windows
         // would show the same nickname -- defeating the whole point of testing
@@ -1095,6 +1100,17 @@ namespace LiarsBatting.Presentation
             _statusPanel.LieTokens.Set(_state.PlayerLieTokens);
         }
 
+        private void RunAfter(float seconds, Action action)
+        {
+            StartCoroutine(RunAfterRoutine(seconds, action));
+        }
+
+        private System.Collections.IEnumerator RunAfterRoutine(float seconds, Action action)
+        {
+            yield return new WaitForSeconds(seconds);
+            action?.Invoke();
+        }
+
         private void BeginPlayerAttackTurn()
         {
             RefreshTokenHeader();
@@ -1134,7 +1150,8 @@ namespace LiarsBatting.Presentation
             }
             else
             {
-                BeginPlayerAttackTurn();
+                _headerText.text = "상대의 턴이 끝났습니다...";
+                RunAfter(TurnHandoverDelaySeconds, BeginPlayerAttackTurn);
             }
         }
 
@@ -1194,7 +1211,8 @@ namespace LiarsBatting.Presentation
                 return;
             }
 
-            PromptTrustOrChallenge(reported, aiLied,
+            _headerText.text = "상대가 판정하는 중...";
+            RunAfter(AiJudgeDelaySeconds, () => PromptTrustOrChallenge(reported, aiLied,
                 onTrust: EndMyAttackTurnAndPassToOpponent,
                 onChallenge: () =>
                 {
@@ -1209,10 +1227,20 @@ namespace LiarsBatting.Presentation
                         PromptPlayerRevealChoice("헛다리! 상대는 진실을 말했습니다. 내 비밀번호 한 자리를 공개하세요.",
                             _ => EndMyAttackTurnAndPassToOpponent());
                     }
-                });
+                }));
         }
 
+        // The opponent "thinks" for a moment before its guess shows up.
         private void BeginAiAttackTurn()
+        {
+            RefreshTokenHeader();
+            _headerText.text = "상대 턴 — 상대가 추리하는 중...";
+            _attackPicker.SetInteractable(false);
+            RefreshPriestButtonVisibility(false);
+            RunAfter(AiGuessDelaySeconds, BeginAiAttackTurnNow);
+        }
+
+        private void BeginAiAttackTurnNow()
         {
             RefreshTokenHeader();
             _headerText.text = "상대 턴 — 방어 결과를 확인하세요";
