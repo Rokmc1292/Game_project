@@ -102,9 +102,9 @@ namespace LiarsBatting.Presentation
 
         // revealLie: false hides whether this particular row was a lie (used when
         // logging what the OPPONENT told the player, so a bluff stays a bluff).
-        public void AddRow(int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true)
+        public void AddRow(int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true, bool truthConfirmed = false)
         {
-            BuildRow(_content, guess, reported, wasLie, revealLie);
+            BuildRow(_content, guess, reported, wasLie, revealLie, truthConfirmed);
             Canvas.ForceUpdateCanvases();
             _scrollRect.verticalNormalizedPosition = 0f;
         }
@@ -116,7 +116,7 @@ namespace LiarsBatting.Presentation
         }
 
         // Builds one guess row (digits + strike/ball/out badges + optional "거짓" badge) under any parent.
-        public static RectTransform BuildRow(Transform parent, int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true)
+        public static RectTransform BuildRow(Transform parent, int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true, bool truthConfirmed = false)
         {
             var row = UiFactory.HorizontalGroup(parent, "Row", spacing: 6);
             UiFactory.SetHeight(row, 28);
@@ -136,6 +136,8 @@ namespace LiarsBatting.Presentation
 
             if (wasLie && revealLie)
                 UiFactory.Badge(row, "거짓", UITheme.ClaySoft, UITheme.Clay);
+            else if (truthConfirmed)
+                UiFactory.Badge(row, "진실", UITheme.BallBg, UITheme.BallFg);
 
             return row;
         }
@@ -143,7 +145,11 @@ namespace LiarsBatting.Presentation
         public void Clear()
         {
             for (int i = _content.childCount - 1; i >= 0; i--)
-                Object.Destroy(_content.GetChild(i).gameObject);
+                {
+                    var row = _content.GetChild(i).gameObject;
+                    row.SetActive(false);
+                    Object.Destroy(row);
+                }
         }
     }
 }

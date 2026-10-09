@@ -13,6 +13,7 @@ namespace LiarsBatting.Presentation
         private readonly GameObject _root;
         private readonly Text _message;
         private readonly RectTransform _buttonRow;
+        private readonly RectTransform _box;
 
         public ChoiceOverlayView(Transform parent)
         {
@@ -32,6 +33,7 @@ namespace LiarsBatting.Presentation
             boxImage.color = UITheme.Bg;
             MenuButtonStyle.ApplyPanel(boxImage);
 
+            _box = box;
             _message = UiFactory.Text(box, "", 16, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
             _buttonRow = UiFactory.HorizontalGroup(box, "Buttons", spacing: 10, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(_buttonRow, 52);
@@ -40,6 +42,24 @@ namespace LiarsBatting.Presentation
             UiFactory.SetFlexible(_buttonRow, 1, 0);
 
             _root.SetActive(false);
+        }
+
+        // Two small buttons in the box's top-right corner: hovering one shows the matching guess history
+        // while the player decides (the history buttons on the HUD sit behind this popup's backdrop).
+        public void SetHistorySources(HistoryHoverView mine, HistoryHoverView opponent, MonoBehaviour host)
+        {
+            var row = UiFactory.HorizontalGroup(_box, "HistoryPeeks", spacing: 8, childAlign: TextAnchor.MiddleRight);
+            row.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;   // not part of the box's vertical layout
+            row.anchorMin = new Vector2(1, 1);
+            row.anchorMax = new Vector2(1, 1);
+            row.pivot = new Vector2(1, 1);
+            row.anchoredPosition = new Vector2(-16, -12);
+            row.sizeDelta = new Vector2(220, 32);
+
+            var mineButton = new HistoryPeekButton(row, "나의 기록", "나의 추측 기록 (상대 응답)", mine, host);
+            UiFactory.SetSize(mineButton.Root, 104, 32);
+            var opponentButton = new HistoryPeekButton(row, "상대 기록", "상대의 추측 기록 (내 판정)", opponent, host);
+            UiFactory.SetSize(opponentButton.Root, 104, 32);
         }
 
         public void Show(string message, params (string label, Action onClick)[] options)

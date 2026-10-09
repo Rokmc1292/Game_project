@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using LiarsBatting.Core;
@@ -7,9 +8,21 @@ namespace LiarsBatting.Presentation
     // A small iron-plate button ("나의 추측 기록 (3)"). Hovering it pops up the complete,
     // scrollable guess history above the button. Exposes the same AddRow / Clear calls the
     // old always-open ScrollingHistoryColumn had.
+    public struct HistoryRecord
+    {
+        public int[] Guess;
+        public JudgeResult Reported;
+        public bool WasLie;
+        public bool RevealLie;
+        public bool TruthConfirmed;   // the opponent's answer was proven true
+    }
+
     public class HistoryHoverView
     {
         public readonly RectTransform Root;
+
+        private readonly List<HistoryRecord> _records = new List<HistoryRecord>();
+        public IReadOnlyList<HistoryRecord> Records => _records;
 
         private readonly string _label;
         private readonly Text _labelText;
@@ -83,13 +96,45 @@ namespace LiarsBatting.Presentation
         public void AddRow(int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true)
         {
             _full.AddRow(guess, reported, wasLie, revealLie);
+            _records.Add(new HistoryRecord { Guess = guess, Reported = reported, WasLie = wasLie, RevealLie = revealLie });
             _count++;
             RefreshLabel();
+        }
+
+        // The last row was a lie that just got exposed (challenged successfully): show the "거짓" badge on it.
+        public void MarkLastRowAsLie()
+        {
+            if (_records.Count == 0) return;
+            var last = _records[_records.Count - 1];
+            last.WasLie = true;
+            last.RevealLie = true;
+            last.TruthConfirmed = false;
+            _records[_records.Count - 1] = last;
+            RebuildFull();
+        }
+
+        // The last row's answer was proven true (a wrong accusation, or a successful truth check): show "진실".
+        public void MarkLastRowAsTruth()
+        {
+            if (_records.Count == 0) return;
+            var last = _records[_records.Count - 1];
+            last.WasLie = false;
+            last.TruthConfirmed = true;
+            _records[_records.Count - 1] = last;
+            RebuildFull();
+        }
+
+        private void RebuildFull()
+        {
+            _full.Clear();
+            foreach (var r in _records)
+                _full.AddRow(r.Guess, r.Reported, r.WasLie, r.RevealLie, r.TruthConfirmed);
         }
 
         public void Clear()
         {
             _full.Clear();
+            _records.Clear();
             _count = 0;
             RefreshLabel();
         }

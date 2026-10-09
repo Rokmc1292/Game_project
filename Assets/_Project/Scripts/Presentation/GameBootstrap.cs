@@ -82,6 +82,7 @@ namespace LiarsBatting.Presentation
         private CardPickerView _attackPicker;
         private MatchHudView _statusPanel;
         private ChoiceOverlayView _choiceOverlay;
+        private bool _awaitingMyChallengeOutcome;   // online: I challenged the opponent's answer and the verdict isn't in yet
         private CountdownTimerView _timer;
         private HeroPortraitView _myHeroPortrait;
         private HeroPortraitView _opponentHeroPortrait;
@@ -114,6 +115,7 @@ namespace LiarsBatting.Presentation
             BuildMatchScreen(root);
             BuildGameOverScreen(root);
             _choiceOverlay = new ChoiceOverlayView(root); // built last so it renders on top
+            _choiceOverlay.SetHistorySources(_statusPanel.MyAttackHistory, _statusPanel.OpponentAttackHistory, this);
 
             _nickname = PlayerPrefs.GetString(EffectiveNicknameKey(), "");
             if (string.IsNullOrEmpty(_nickname)) ShowNicknameScreen();
@@ -494,6 +496,7 @@ namespace LiarsBatting.Presentation
                     },
                     onChallenge: () =>
                     {
+                        _awaitingMyChallengeOutcome = true;
                         _network.SubmitChallenge();
                         _headerText.text = $"{_network.OpponentNickname}님의 응답을 기다리는 중...";
                     });
@@ -503,6 +506,12 @@ namespace LiarsBatting.Presentation
 
             _network.OnIMustReveal += () =>
             {
+                if (_awaitingMyChallengeOutcome)
+                {
+                    // I challenged but the opponent told the truth -- I'm the one who has to open a digit.
+                    _awaitingMyChallengeOutcome = false;
+                    _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
+                }
                 PromptPlayerRevealChoice("비밀번호 한 자리를 공개해야 합니다.", index =>
                 {
                     if (index < 0) { UpdateOnlineTurnUI(); return; }
@@ -513,6 +522,12 @@ namespace LiarsBatting.Presentation
 
             _network.OnOpponentRevealed += (side, index, digit) =>
             {
+                if (_awaitingMyChallengeOutcome)
+                {
+                    // I challenged and the opponent now has to open a digit: their answer was a lie.
+                    _awaitingMyChallengeOutcome = false;
+                    _statusPanel.MyAttackHistory.MarkLastRowAsLie();
+                }
                 _state.AiSecret[index] = digit;
                 _state.AiRevealed[index] = true;
                 RefreshRevealedRows();
@@ -1219,11 +1234,14 @@ namespace LiarsBatting.Presentation
                     if (aiLied)
                     {
                         // Caught it: the AI has to open one of its own digits.
+                        _statusPanel.MyAttackHistory.MarkLastRowAsLie();
                         RevealAiDigit(prefix: "적중! 상대가 거짓말을 했습니다.", onDone: EndMyAttackTurnAndPassToOpponent);
                     }
                     else
                     {
                         // Wrong accusation: the player opens one of their own digits.
+                        // The opponent's answer is now proven true -- keep that in the log.
+                        _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
                         PromptPlayerRevealChoice("헛다리! 상대는 진실을 말했습니다. 내 비밀번호 한 자리를 공개하세요.",
                             _ => EndMyAttackTurnAndPassToOpponent());
                     }
@@ -1517,6 +1535,9 @@ namespace LiarsBatting.Presentation
 
             void ShowRogueResult(bool wasLie)
             {
+                // The truth check is certain, so the log can record the verdict right away.
+                if (wasLie) _statusPanel.MyAttackHistory.MarkLastRowAsLie();
+                else _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
                 string resultMessage = wasLie ? "진실 간파 결과: 거짓말이었습니다!" : "진실 간파 결과: 진실이었습니다!";
                 _choiceOverlay.Show(resultMessage, ("확인", wasLie ? (Action)ResolveChallenge : ResolveTrust));
             }
