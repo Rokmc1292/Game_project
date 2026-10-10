@@ -973,7 +973,7 @@ namespace LiarsBatting.Presentation
 
         private void BuildGameOverScreen(Transform root)
         {
-            _resultPopup = new ResultPopupView(root, () =>
+            _resultPopup = new ResultPopupView(root, this, () =>
             {
                 _timer.Stop();
                 _network?.Stop();

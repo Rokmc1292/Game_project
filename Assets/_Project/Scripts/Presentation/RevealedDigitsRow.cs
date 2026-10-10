@@ -32,6 +32,13 @@ namespace LiarsBatting.Presentation
                 _slots[i].sprite = revealed[i] ? CardArt.Digit(secret[i]) : CardArt.Unknown();
         }
 
+        public Image Slot(int index) => _slots[index];
+
+        public void ShowAllUnknown()
+        {
+            for (int i = 0; i < 4; i++) _slots[i].sprite = CardArt.Unknown();
+        }
+
         // Always show every digit (used for my own secret).
         public void ShowDigits(int[] digits)
         {
