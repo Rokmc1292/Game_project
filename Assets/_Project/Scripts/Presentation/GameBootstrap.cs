@@ -90,7 +90,7 @@ namespace LiarsBatting.Presentation
 
         private Text _headerText;
         private Text _tokenText;
-        private Text _gameOverText;
+        private ResultPopupView _resultPopup;
         private Text _menuGreetingText;
 
         private void Start()
@@ -622,10 +622,10 @@ namespace LiarsBatting.Presentation
         {
             _timer.Stop();
             _network?.Stop();
-            _gameOverText.text = won
-                ? "승리! 상대 비밀번호를 정확히 맞혔습니다."
-                : $"패배. 내 비밀번호 {string.Join(" ", _state.PlayerSecret)}를 들켰습니다.";
-            _gameOverScreen.SetActive(true);
+            // Online, the opponent's secret isn't known on a win, so only a defeat shows cards (my own secret).
+            _resultPopup.Show(won,
+                won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다",
+                won ? null : _state.PlayerSecret);
         }
 
         // ---------- hero select ----------
@@ -973,24 +973,7 @@ namespace LiarsBatting.Presentation
 
         private void BuildGameOverScreen(Transform root)
         {
-            _gameOverScreen = new GameObject("GameOverScreen", typeof(RectTransform), typeof(Image));
-            var rt = (RectTransform)_gameOverScreen.transform;
-            rt.SetParent(root, false);
-            rt.anchorMin = Vector2.zero;
-            rt.anchorMax = Vector2.one;
-            rt.offsetMin = Vector2.zero;
-            rt.offsetMax = Vector2.zero;
-            _gameOverScreen.GetComponent<Image>().color = new Color(0, 0, 0, 0.75f);
-
-            var box = UiFactory.VerticalGroup(rt, "Box", spacing: 18, padding: new RectOffset(40, 40, 40, 40));
-            box.anchorMin = new Vector2(0.3f, 0.35f);
-            box.anchorMax = new Vector2(0.7f, 0.65f);
-            box.offsetMin = Vector2.zero;
-            box.offsetMax = Vector2.zero;
-            box.gameObject.AddComponent<Image>().color = UITheme.Bg;
-
-            _gameOverText = UiFactory.Text(box, "", 24, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.Button(box, "메인 메뉴로", UITheme.Accent, Color.white, () =>
+            _resultPopup = new ResultPopupView(root, () =>
             {
                 _timer.Stop();
                 _network?.Stop();
@@ -998,8 +981,8 @@ namespace LiarsBatting.Presentation
                 _isOnlineMatch = false;
                 _gameOverScreen.SetActive(false);
                 ShowMainMenu();
-            }, 16);
-
+            });
+            _gameOverScreen = _resultPopup.Root.gameObject;
             _gameOverScreen.SetActive(false);
         }
 
@@ -1555,10 +1538,9 @@ namespace LiarsBatting.Presentation
         private void EndGame(bool playerWon)
         {
             _timer.Stop();
-            _gameOverText.text = playerWon
-                ? $"승리! 상대 비밀번호는 {string.Join(" ", _state.AiSecret)} 였습니다."
-                : $"패배. 내 비밀번호 {string.Join(" ", _state.PlayerSecret)}를 들켰습니다.";
-            _gameOverScreen.SetActive(true);
+            _resultPopup.Show(playerWon,
+                playerWon ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다",
+                playerWon ? _state.AiSecret : _state.PlayerSecret);
         }
     }
 }

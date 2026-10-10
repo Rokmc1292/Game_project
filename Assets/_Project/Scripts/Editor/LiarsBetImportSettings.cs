@@ -12,7 +12,8 @@ public class LiarsBetImportSettings : AssetPostprocessor
         bool isButton = assetPath.Contains("/Resources/Buttons/");
         bool isHud = assetPath.Contains("/Resources/Hud/");
         bool isChoice = assetPath.Contains("/Resources/ChoiceButtons/");
-        if (!isCard && !isBackground && !isButton && !isHud && !isChoice) return;
+        bool isResult = assetPath.Contains("/Resources/Result/");
+        if (!isCard && !isBackground && !isButton && !isHud && !isChoice && !isResult) return;
 
         var imp = (TextureImporter)assetImporter;
         imp.textureType = TextureImporterType.Sprite;
@@ -26,6 +27,18 @@ public class LiarsBetImportSettings : AssetPostprocessor
             // 9-slice: 리벳이 있는 좌우 끝은 늘어나지 않고 가운데만 늘어납니다.
             imp.spritePixelsPerUnit = 200;                       // 600x104 -> 캔버스에서 300x52
             imp.spriteBorder = new Vector4(56, 22, 56, 22);      // left, bottom, right, top
+            imp.textureCompression = TextureImporterCompression.Uncompressed;
+            var settings = new TextureImporterSettings();
+            imp.ReadTextureSettings(settings);
+            settings.spriteMeshType = SpriteMeshType.FullRect;
+            imp.SetTextureSettings(settings);
+        }
+        else if (isResult)
+        {
+            // 결과 팝업: 가죽 패널은 9-slice, 제목 이미지는 그대로
+            bool panel = assetPath.Contains("result_panel");
+            imp.spritePixelsPerUnit = 200;
+            imp.spriteBorder = panel ? new Vector4(100, 100, 100, 100) : Vector4.zero;
             imp.textureCompression = TextureImporterCompression.Uncompressed;
             var settings = new TextureImporterSettings();
             imp.ReadTextureSettings(settings);
