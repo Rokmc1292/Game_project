@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -28,6 +29,7 @@ namespace LiarsBatting.Presentation
 
         private readonly Button _submitButton;
         private readonly Action<int[]> _onSubmit;
+        private readonly CardFlightAnimator _flightAnimator;
 
         private static readonly Color TrayUsedTint = new Color(0.30f, 0.30f, 0.30f, 1f);
         private static readonly Color TrayDisabledTint = new Color(0.20f, 0.20f, 0.20f, 1f);
@@ -36,6 +38,7 @@ namespace LiarsBatting.Presentation
         public CardPickerView(Transform parent, string title, string submitLabel, Action<int[]> onSubmit)
         {
             _onSubmit = onSubmit;
+            _flightAnimator = GetFlightAnimator(parent);
             var slotCard = new Vector2(64f, 90f);
             var trayCard = new Vector2(56f, 78f);
             Root = UiFactory.VerticalGroup(parent, "CardPicker", spacing: 14, childAlign: TextAnchor.UpperCenter);
@@ -62,6 +65,7 @@ namespace LiarsBatting.Presentation
             Action<int[]> onSubmit, Vector2 slotCard, Vector2 trayCard)
         {
             _onSubmit = onSubmit;
+            _flightAnimator = GetFlightAnimator(slotsParent);
 
             var slotsRow = BuildSlots(slotsParent, slotCard, 16f);
             UiFactory.StretchToFillParent(slotsRow);
@@ -138,15 +142,72 @@ namespace LiarsBatting.Presentation
             _slotValues[emptyIndex] = digit;
             _slotImages[emptyIndex].sprite = CardArt.Digit(digit);
             _slotImages[emptyIndex].color = Color.white;
+            if (_flightAnimator != null)
+                _flightAnimator.Play(_trayImages[digit], _slots[emptyIndex], _slotImages[emptyIndex]);
             _used[digit] = true;
             _trayImages[digit].color = TrayUsedTint;
             RefreshSubmitInteractable();
+        }
+
+        private static CardFlightAnimator GetFlightAnimator(Transform parent)
+        {
+            var canvas = parent.GetComponentInParent<Canvas>();
+            if (canvas == null) return null;
+            var animator = canvas.GetComponent<CardFlightAnimator>();
+            return animator != null ? animator : canvas.gameObject.AddComponent<CardFlightAnimator>();
+        }
+
+        // Draws a temporary copy above the UI and moves it from the tray card to its slot.
+        private sealed class CardFlightAnimator : MonoBehaviour
+        {
+            private const float Duration = 0.28f;
+
+            public void Play(Image source, RectTransform destination, Image destinationImage)
+            {
+                var canvas = GetComponent<Canvas>().rootCanvas;
+                var flightObject = new GameObject("CardFlight", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var flightRect = (RectTransform)flightObject.transform;
+                flightRect.SetParent(canvas.transform, false);
+                flightRect.SetAsLastSibling();
+                var flightImage = flightObject.GetComponent<Image>();
+                flightImage.sprite = source.sprite;
+                flightImage.preserveAspect = true;
+                flightImage.raycastTarget = false;
+                var sourceRect = (RectTransform)source.transform;
+                var sourceScreen = RectTransformUtility.WorldToScreenPoint(canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera, sourceRect.TransformPoint(sourceRect.rect.center));
+                var destinationScreen = RectTransformUtility.WorldToScreenPoint(canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera, destination.TransformPoint(destination.rect.center));
+                RectTransformUtility.ScreenPointToLocalPointInRectangle((RectTransform)canvas.transform, sourceScreen, canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera, out var start);
+                RectTransformUtility.ScreenPointToLocalPointInRectangle((RectTransform)canvas.transform, destinationScreen, canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera, out var end);
+                flightRect.anchoredPosition = start;
+                flightRect.sizeDelta = sourceRect.rect.size;
+                destinationImage.canvasRenderer.SetAlpha(0f);
+                StartCoroutine(Animate(flightRect, flightObject, destinationImage, start, end));
+            }
+
+            private static IEnumerator Animate(RectTransform rect, GameObject flightObject, Image destinationImage, Vector2 start, Vector2 end)
+            {
+                float elapsed = 0f;
+                while (elapsed < Duration)
+                {
+                    elapsed += Time.unscaledDeltaTime;
+                    float t = Mathf.Clamp01(elapsed / Duration);
+                    float eased = 1f - Mathf.Pow(1f - t, 3f);
+                    rect.anchoredPosition = Vector2.LerpUnclamped(start, end, eased);
+                    rect.localScale = Vector3.one * Mathf.Lerp(1f, 0.82f, eased);
+                    yield return null;
+                }
+                if (destinationImage != null) destinationImage.canvasRenderer.SetAlpha(1f);
+                Destroy(flightObject);
+            }
         }
 
         private void ClearSlot(int slotIndex)
         {
             int digit = _slotValues[slotIndex];
             if (digit < 0) return;
+
+            if (_flightAnimator != null)
+                _flightAnimator.Play(_slotImages[slotIndex], (RectTransform)_trayImages[digit].transform, _trayImages[digit]);
 
             _slotValues[slotIndex] = -1;
             _slotImages[slotIndex].sprite = null;

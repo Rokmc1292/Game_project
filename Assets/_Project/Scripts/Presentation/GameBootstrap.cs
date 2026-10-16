@@ -89,6 +89,10 @@ namespace LiarsBatting.Presentation
         private Button _priestButton;
 
         private Text _headerText;
+        private GameObject _turnAnnouncementRoot;
+        private Image _turnAnnouncementBackdrop;
+        private Text _turnAnnouncementText;
+        private Coroutine _turnAnnouncementRoutine;
         private Text _tokenText;
         private ResultPopupView _resultPopup;
         private Text _menuGreetingText;
@@ -586,6 +590,13 @@ namespace LiarsBatting.Presentation
 
         private void BeginOnlineAttackTurn()
         {
+            _timer.Stop();
+            _attackPicker.SetInteractable(false);
+            ShowTurnAnnouncement("나의 턴", BeginOnlineAttackTurnAfterAnnouncement);
+        }
+
+        private void BeginOnlineAttackTurnAfterAnnouncement()
+        {
             RefreshTokenHeader();
             _headerText.text = $"내 턴 — {_network.OpponentNickname}님의 비밀번호를 추리하세요";
             _attackPicker.SetInteractable(true);
@@ -598,6 +609,13 @@ namespace LiarsBatting.Presentation
         }
 
         private void BeginOnlineWaitTurn()
+        {
+            _timer.Stop();
+            _attackPicker.SetInteractable(false);
+            ShowTurnAnnouncement("상대 턴", BeginOnlineWaitTurnAfterAnnouncement);
+        }
+
+        private void BeginOnlineWaitTurnAfterAnnouncement()
         {
             _timer.Stop();
             RefreshTokenHeader();
@@ -1103,14 +1121,82 @@ namespace LiarsBatting.Presentation
             StartCoroutine(RunAfterRoutine(seconds, action));
         }
 
+        private void ShowTurnAnnouncement(string message, Action onComplete)
+        {
+            if (_turnAnnouncementRoot == null)
+            {
+                _turnAnnouncementRoot = new GameObject("TurnAnnouncement", typeof(RectTransform), typeof(Image));
+                var root = (RectTransform)_turnAnnouncementRoot.transform;
+                root.SetParent(_matchScreen.transform.parent, false);
+                UiFactory.StretchToFillParent(root);
+                _turnAnnouncementBackdrop = _turnAnnouncementRoot.GetComponent<Image>();
+                _turnAnnouncementBackdrop.color = new Color(0f, 0f, 0f, 0f);
+                _turnAnnouncementText = UiFactory.Text(root, "", 36, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold);
+                UiFactory.StretchToFillParent((RectTransform)_turnAnnouncementText.transform);
+                _turnAnnouncementRoot.SetActive(false);
+            }
+
+            if (_turnAnnouncementRoutine != null) StopCoroutine(_turnAnnouncementRoutine);
+            _turnAnnouncementText.text = message;
+            _turnAnnouncementRoot.SetActive(true);
+            _turnAnnouncementRoot.transform.SetAsLastSibling();
+            SetTurnAnnouncementAlpha(0f);
+            _turnAnnouncementRoutine = StartCoroutine(TurnAnnouncementRoutine(onComplete));
+        }
+
+        private System.Collections.IEnumerator TurnAnnouncementRoutine(Action onComplete)
+        {
+            const float fadeDuration = 0.3f;
+            const float holdDuration = 0.55f;
+            float elapsed = 0f;
+            while (elapsed < fadeDuration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                SetTurnAnnouncementAlpha(Mathf.Clamp01(elapsed / fadeDuration));
+                yield return null;
+            }
+            SetTurnAnnouncementAlpha(1f);
+
+            yield return new WaitForSecondsRealtime(holdDuration);
+
+            elapsed = 0f;
+            while (elapsed < fadeDuration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                SetTurnAnnouncementAlpha(1f - Mathf.Clamp01(elapsed / fadeDuration));
+                yield return null;
+            }
+            _turnAnnouncementRoot.SetActive(false);
+            _turnAnnouncementRoutine = null;
+            onComplete?.Invoke();
+        }
+
+        private void SetTurnAnnouncementAlpha(float alpha)
+        {
+            var backdropColor = _turnAnnouncementBackdrop.color;
+            backdropColor.a = 0.72f * alpha;
+            _turnAnnouncementBackdrop.color = backdropColor;
+
+            var textColor = _turnAnnouncementText.color;
+            textColor.a = alpha;
+            _turnAnnouncementText.color = textColor;
+        }
+
         private System.Collections.IEnumerator RunAfterRoutine(float seconds, Action action)
         {
             yield return new WaitForSeconds(seconds);
             action?.Invoke();
         }
 
-        private void BeginPlayerAttackTurn()
+        private void BeginPlayerAttackTurn(bool announce = true)
         {
+            if (announce)
+            {
+                _timer.Stop();
+                _attackPicker.SetInteractable(false);
+                ShowTurnAnnouncement("나의 턴", () => BeginPlayerAttackTurn(false));
+                return;
+            }
             RefreshTokenHeader();
             _headerText.text = "내 턴 — 상대 비밀번호를 추리하세요";
             _attackPicker.SetInteractable(true);
@@ -1131,7 +1217,7 @@ namespace LiarsBatting.Presentation
             if (_state.PlayerExtraTurnPending)
             {
                 _state.PlayerExtraTurnPending = false;
-                BeginPlayerAttackTurn();
+                BeginPlayerAttackTurn(false);
             }
             else
             {
@@ -1144,12 +1230,12 @@ namespace LiarsBatting.Presentation
             if (_state.AiHero == HeroId.Warrior && _ai.ShouldUseWarriorExtraTurn(_state.AiAbilityCharges))
             {
                 _state.AiAbilityCharges--;
-                BeginAiAttackTurn();
+                BeginAiAttackTurn(false);
             }
             else
             {
                 _headerText.text = "상대의 턴이 끝났습니다...";
-                RunAfter(TurnHandoverDelaySeconds, BeginPlayerAttackTurn);
+                RunAfter(TurnHandoverDelaySeconds, () => BeginPlayerAttackTurn());
             }
         }
 
@@ -1232,8 +1318,15 @@ namespace LiarsBatting.Presentation
         }
 
         // The opponent "thinks" for a moment before its guess shows up.
-        private void BeginAiAttackTurn()
+        private void BeginAiAttackTurn(bool announce = true)
         {
+            if (announce)
+            {
+                _timer.Stop();
+                _attackPicker.SetInteractable(false);
+                ShowTurnAnnouncement("상대 턴", () => BeginAiAttackTurn(false));
+                return;
+            }
             RefreshTokenHeader();
             _headerText.text = "상대 턴 — 상대가 추리하는 중...";
             _attackPicker.SetInteractable(false);
