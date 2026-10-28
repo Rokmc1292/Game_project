@@ -95,7 +95,6 @@ namespace LiarsBatting.Presentation
 
         public void PlaceOpponentHero(RectTransform hero) => Place(hero, 340, 14, 90, 142);
         public void PlaceMyHero(RectTransform hero) => Place(hero, 302, 512, 90, 142);
-        public void PlacePriestButton(RectTransform button) => Place(button, 888, 624, 364, 32);
 
         public void ShowMySecret(int[] secret) => MySecret.ShowDigits(secret);
 

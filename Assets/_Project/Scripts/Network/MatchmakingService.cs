@@ -171,6 +171,16 @@ namespace LiarsBatting.Network
 
         // ---------- friend invite ----------
 
+        // How long an invite stays answerable. Without this a pending invite whose sender
+        // quit (closed the window, backed out, crashed) sat in the recipient's inbox
+        // forever; accepting it later dropped the recipient into a match nobody else was in,
+        // stuck on "waiting for the opponent" for good.
+        private const long InviteExpirySeconds = 60;
+
+        private string _pendingInviteTarget;
+        private string _pendingInviteMatchId;
+        private long _pendingInviteSentAt;
+
         public void SendFriendInvite(string targetNickname,
             Action<string> onAccepted, Action onDeclined, Action<string> onError)
         {
@@ -183,6 +193,7 @@ namespace LiarsBatting.Network
                 }
 
                 string matchId = Guid.NewGuid().ToString("N");
+                long sentAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var matchFields = new JObject
                 {
                     ["playerA"] = FirestoreClient.StringField(_myNickname),
@@ -195,11 +206,16 @@ namespace LiarsBatting.Network
                     {
                         ["fromNickname"] = FirestoreClient.StringField(_myNickname),
                         ["matchId"] = FirestoreClient.StringField(matchId),
-                        ["status"] = FirestoreClient.StringField("pending")
+                        ["status"] = FirestoreClient.StringField("pending"),
+                        ["sentAt"] = FirestoreClient.IntField(sentAt)
                     };
-                    _db.SetDocument($"invites/{targetNickname}", inviteFields,
-                        () => StartPolling(() => PollInviteResponseOnce(matchId, onAccepted, onDeclined, onError)),
-                        onError);
+                    _db.SetDocument($"invites/{targetNickname}", inviteFields, () =>
+                    {
+                        _pendingInviteTarget = targetNickname;
+                        _pendingInviteMatchId = matchId;
+                        _pendingInviteSentAt = sentAt;
+                        StartPolling(() => PollInviteResponseOnce(matchId, onAccepted, onDeclined, onError));
+                    }, onError);
                 }, onError);
             }, onError);
         }
@@ -207,6 +223,14 @@ namespace LiarsBatting.Network
         private void PollInviteResponseOnce(string matchId,
             Action<string> onAccepted, Action onDeclined, Action<string> onError)
         {
+            // Nobody answered in time: take the invite back so it can't be accepted later.
+            if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() - _pendingInviteSentAt > InviteExpirySeconds)
+            {
+                CancelFriendInvite();
+                onError("상대가 응답하지 않아 초대가 취소되었습니다.");
+                return;
+            }
+
             _db.GetDocument($"matches/{matchId}", doc =>
             {
                 if (doc == null) return;
@@ -214,18 +238,56 @@ namespace LiarsBatting.Network
                 if (status == "waiting_secrets")
                 {
                     StopPolling();
+                    ClearPendingInvite();
                     onAccepted(matchId);
                 }
                 else if (status == "declined")
                 {
                     StopPolling();
+                    ClearPendingInvite();
                     onDeclined();
                 }
             }, onError);
         }
 
-        // Watches my OWN inbox for someone else's invite. Meant to run only
-        // while the player is sitting on the friend-match screen.
+        private void ClearPendingInvite()
+        {
+            _pendingInviteTarget = null;
+            _pendingInviteMatchId = null;
+        }
+
+        // Withdraws my outgoing invite (backed out of the screen, or it timed out) so the
+        // recipient can no longer accept it. Only touches it if it is still unanswered.
+        public void CancelFriendInvite()
+        {
+            StopPolling();
+            string target = _pendingInviteTarget;
+            string matchId = _pendingInviteMatchId;
+            ClearPendingInvite();
+            if (target == null) return;
+
+            _db.GetDocument($"matches/{matchId}", doc =>
+            {
+                if (doc == null || FirestoreClient.ReadString(doc, "status", "") != "invited") return;
+                _db.SetDocument($"matches/{matchId}", new JObject
+                {
+                    ["playerA"] = FirestoreClient.StringField(_myNickname),
+                    ["playerB"] = FirestoreClient.StringField(target),
+                    ["status"] = FirestoreClient.StringField("cancelled")
+                }, null, null);
+            }, null);
+
+            _db.GetDocument($"invites/{target}", doc =>
+            {
+                if (doc == null) return;
+                bool sameInvite = FirestoreClient.ReadString(doc, "matchId", "") == matchId;
+                bool stillPending = FirestoreClient.ReadString(doc, "status", "") == "pending";
+                if (sameInvite && stillPending) _db.DeleteDocument($"invites/{target}", null, null);
+            }, null);
+        }
+
+        // Watches my OWN inbox for someone else's invite. Runs from the main menu on
+        // (see GameBootstrap.StartGlobalInviteWatch), and is stopped while a match is underway.
         public void WatchForIncomingInvite(Action<string, string> onInvite, Action<string> onError)
         {
             StartPolling(() =>
@@ -234,6 +296,11 @@ namespace LiarsBatting.Network
                 {
                     if (doc == null) return;
                     if (FirestoreClient.ReadString(doc, "status", "") != "pending") return;
+
+                    // An old invite (or one written before invites carried a timestamp) is
+                    // dead: its sender is long gone, so don't offer it.
+                    long sentAt = FirestoreClient.ReadInt(doc, "sentAt", 0);
+                    if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() - sentAt > InviteExpirySeconds) return;
 
                     string from = FirestoreClient.ReadString(doc, "fromNickname", "");
                     string matchId = FirestoreClient.ReadString(doc, "matchId", "");
@@ -244,6 +311,27 @@ namespace LiarsBatting.Network
         }
 
         public void RespondToInvite(string fromNickname, string matchId, bool accept,
+            Action onDone, Action<string> onError)
+        {
+            if (!accept)
+            {
+                WriteInviteResponse(fromNickname, matchId, false, onDone, onError);
+                return;
+            }
+
+            // Accepting only works while the sender's match is still waiting for an answer.
+            _db.GetDocument($"matches/{matchId}", doc =>
+            {
+                if (doc == null || FirestoreClient.ReadString(doc, "status", "") != "invited")
+                {
+                    onError("초대가 만료되었거나 취소되었습니다.");
+                    return;
+                }
+                WriteInviteResponse(fromNickname, matchId, true, onDone, onError);
+            }, onError);
+        }
+
+        private void WriteInviteResponse(string fromNickname, string matchId, bool accept,
             Action onDone, Action<string> onError)
         {
             var inviteFields = new JObject

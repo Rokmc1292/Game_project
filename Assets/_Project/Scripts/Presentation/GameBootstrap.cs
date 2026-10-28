@@ -31,8 +31,8 @@ namespace LiarsBatting.Presentation
         private const float HeroPickSeconds = 10f;
         private const float SecretPickSeconds = 10f;
         private const float GuessSeconds = 30f;
-        private const float DefendChoiceSeconds = 10f;
-        private const float TrustChoiceSeconds = 10f;
+        private const float DefendChoiceSeconds = 20f;
+        private const float TrustChoiceSeconds = 20f;
 
         // Single-player pacing: short beats so the opponent doesn't answer / attack instantly.
         private const float AiJudgeDelaySeconds = 1.2f;       // opponent "judging" my guess
@@ -75,6 +75,7 @@ namespace LiarsBatting.Presentation
         private Text _randomMatchStatusText;
         private InputField _friendTargetInput;
         private Text _friendStatusText;
+        private Button _friendInviteButton;
 
         private readonly List<Button> _heroSelectButtons = new List<Button>();
 
@@ -86,7 +87,7 @@ namespace LiarsBatting.Presentation
         private CountdownTimerView _timer;
         private HeroPortraitView _myHeroPortrait;
         private HeroPortraitView _opponentHeroPortrait;
-        private Button _priestButton;
+        private bool _myTurnActive;   // true while it's my attack turn (gates the Priest ability button)
 
         private Text _headerText;
         private GameObject _turnAnnouncementRoot;
@@ -94,6 +95,7 @@ namespace LiarsBatting.Presentation
         private Text _turnAnnouncementText;
         private Coroutine _turnAnnouncementRoutine;
         private Text _tokenText;
+        private Button _surrenderButton;
         private ResultPopupView _resultPopup;
         private Text _menuGreetingText;
 
@@ -156,6 +158,10 @@ namespace LiarsBatting.Presentation
             _timer = new CountdownTimerView(row, this);
             _tokenText = UiFactory.Text(row, "", 13, UITheme.Muted, TextAnchor.MiddleRight);
             UiFactory.SetSize(_tokenText, 220, 30);
+
+            _surrenderButton = UiFactory.Button(row, "항복", UITheme.Clay, Color.white, OnSurrenderClicked, 13);
+            UiFactory.SetSize(_surrenderButton, 70, 30);
+            _surrenderButton.gameObject.SetActive(false); // only shown while a match is actually underway
         }
 
         private GameObject BuildFullScreenContainer(Transform root, string name)
@@ -306,6 +312,7 @@ namespace LiarsBatting.Presentation
 
         private void ShowRandomMatchScreen()
         {
+            _inviteWatcher?.StopPolling(); // an invite popup must not interrupt the queue (or the match after it)
             ShowOnly(_randomMatchScreen);
             _headerText.text = "랜덤 매칭";
             _tokenText.text = "";
@@ -340,38 +347,37 @@ namespace LiarsBatting.Presentation
             _friendStatusText = UiFactory.Text(centered, "", 12, UITheme.Muted, TextAnchor.MiddleCenter);
             _friendStatusText.gameObject.SetActive(false);
 
-            Button inviteBtn = null;
-            inviteBtn = UiFactory.Button(centered, "초대 보내기", UITheme.Accent, Color.white, () =>
+            _friendInviteButton = UiFactory.Button(centered, "초대 보내기", UITheme.Accent, Color.white, () =>
             {
                 string target = _friendTargetInput.text.Trim();
                 if (target.Length == 0) { ShowFriendStatus("닉네임을 입력해주세요.", true); return; }
                 if (target == _nickname) { ShowFriendStatus("자기 자신은 초대할 수 없습니다.", true); return; }
 
-                inviteBtn.interactable = false;
-                ShowFriendStatus("초대를 보내는 중...", false);
+                _friendInviteButton.interactable = false;
+                ShowFriendStatus("초대를 보내는 중... 상대의 응답을 기다립니다 (최대 60초)", false);
 
                 _matchmaking.SendFriendInvite(target,
                     acceptedMatchId =>
                     {
-                        inviteBtn.interactable = true;
+                        _friendInviteButton.interactable = true;
                         BeginOnlineMatchFlow(acceptedMatchId, target);
                     },
                     () =>
                     {
-                        inviteBtn.interactable = true;
+                        _friendInviteButton.interactable = true;
                         ShowFriendStatus("상대가 초대를 거절했습니다.", true);
                     },
                     error =>
                     {
-                        inviteBtn.interactable = true;
+                        _friendInviteButton.interactable = true;
                         ShowFriendStatus(error, true);
                     });
             }, 15);
-            UiFactory.SetHeight(inviteBtn, 44);
+            UiFactory.SetHeight(_friendInviteButton, 44);
 
             var backBtn = UiFactory.Button(centered, "메인 메뉴로", UITheme.Bg, UITheme.Muted, () =>
             {
-                _matchmaking?.StopPolling();
+                _matchmaking?.CancelFriendInvite(); // take back an invite nobody has answered yet
                 ShowMainMenu();
             }, 12);
             UiFactory.SetHeight(backBtn, 30);
@@ -391,9 +397,13 @@ namespace LiarsBatting.Presentation
             _tokenText.text = "";
             _friendTargetInput.text = "";
             _friendStatusText.gameObject.SetActive(false);
+            // The button is disabled while an invite is pending; leaving the screen mid-wait
+            // used to leave it disabled for good.
+            _friendInviteButton.interactable = true;
 
             // Incoming invites are watched globally (see StartGlobalInviteWatch,
             // running since the main menu) -- this instance is only for SENDING.
+            _matchmaking?.CancelFriendInvite();
             _matchmaking = new MatchmakingService(_firestore, this, _nickname);
         }
 
@@ -414,7 +424,13 @@ namespace LiarsBatting.Presentation
                         {
                             _inviteWatcher.RespondToInvite(fromNickname, matchId, true,
                                 () => BeginOnlineMatchFlow(matchId, fromNickname),
-                                error => Debug.LogWarning($"초대 수락 실패: {error}"));
+                                error =>
+                                {
+                                    // Expired/withdrawn invite (or a network error): say so, and go back
+                                    // to listening instead of dropping into a match nobody is in.
+                                    _choiceOverlay.Show(error, ("확인", () => { }));
+                                    StartGlobalInviteWatch();
+                                });
                         }),
                         ("거절", UITheme.Clay, () =>
                         {
@@ -434,6 +450,7 @@ namespace LiarsBatting.Presentation
         // of an AiOpponent. Hero selection happens first, same as AI mode.
         private void BeginOnlineMatchFlow(string matchId, string opponentNickname)
         {
+            _inviteWatcher?.StopPolling(); // no invite popups in the middle of a match
             _firestore.GetDocument($"matches/{matchId}", doc =>
             {
                 if (doc == null)
@@ -470,6 +487,7 @@ namespace LiarsBatting.Presentation
 
             _network.OnBothSecretsReady += () =>
             {
+                _surrenderButton.gameObject.SetActive(true);
                 RefreshTokenHeader();
                 UpdateOnlineTurnUI();
             };
@@ -540,6 +558,7 @@ namespace LiarsBatting.Presentation
             _network.OnTurnChanged += _ => UpdateOnlineTurnUI();
 
             _network.OnGameOver += winner => EndOnlineGame(winner == _network.MySide);
+            _network.OnOpponentSurrendered += () => EndOnlineGame(true, "상대가 항복했다");
 
             _network.OnError += error => ShowFriendStatus(error, true); // surfaces even off the friend screen; harmless no-op UI otherwise
 
@@ -600,7 +619,7 @@ namespace LiarsBatting.Presentation
             RefreshTokenHeader();
             _headerText.text = $"내 턴 — {_network.OpponentNickname}님의 비밀번호를 추리하세요";
             _attackPicker.SetInteractable(true);
-            RefreshPriestButtonVisibility(true);
+            SetMyTurnActive(true);
             _timer.Start(GuessSeconds, () =>
             {
                 _attackPicker.SetInteractable(false);
@@ -621,7 +640,7 @@ namespace LiarsBatting.Presentation
             RefreshTokenHeader();
             _headerText.text = $"{_network.OpponentNickname}님의 턴 — 대기 중";
             _attackPicker.SetInteractable(false);
-            RefreshPriestButtonVisibility(false);
+            SetMyTurnActive(false);
         }
 
         private void OnOnlineGuessSubmitted(int[] guess)
@@ -636,13 +655,16 @@ namespace LiarsBatting.Presentation
             _network.SubmitGuess(guess, keepTurn);
         }
 
-        private void EndOnlineGame(bool won)
+        private void EndOnlineGame(bool won, string message = null)
         {
             _timer.Stop();
             _network?.Stop();
+            _matchSession++;
+            CancelTurnAnnouncement();
+            _surrenderButton.gameObject.SetActive(false);
             // Online, the opponent's secret isn't known on a win, so only a defeat shows cards (my own secret).
             _resultPopup.Show(won,
-                won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다",
+                message ?? (won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
                 won ? null : _state.PlayerSecret);
         }
 
@@ -828,32 +850,34 @@ namespace LiarsBatting.Presentation
             _statusPanel = new MatchHudView(rt, this);
             var stage = _statusPanel.Stage;
 
-            _opponentHeroPortrait = new HeroPortraitView(stage, showCharges: false);
+            _opponentHeroPortrait = new HeroPortraitView(stage, isMine: false);
             _statusPanel.PlaceOpponentHero(_opponentHeroPortrait.Root);
 
-            _myHeroPortrait = new HeroPortraitView(stage, showCharges: true);
+            _myHeroPortrait = new HeroPortraitView(stage, isMine: true);
             _statusPanel.PlaceMyHero(_myHeroPortrait.Root);
-            _myHeroPortrait.SetAbilityClickable(OnMyAbilityClicked);
 
             _attackPicker = new CardPickerView(_statusPanel.GuessSlotsHolder, _statusPanel.TrayHolder,
                 "추측 제출", OnPlayerGuessSubmitted, new Vector2(76, 106), new Vector2(64, 86));
 
-            _priestButton = UiFactory.Button(stage, "사제 능력: 한 자리 묻기", UITheme.Clay, Color.white,
-                ShowPriestPositionPicker, 13);
-            _statusPanel.PlacePriestButton((RectTransform)_priestButton.transform);
-            _priestButton.gameObject.SetActive(false);
-
             // The hourglass shows the countdown during a match (the header badge is hidden).
-            _timer.OnTick = _statusPanel.Hourglass.SetRemaining;
-            _timer.OnStopped = _statusPanel.Hourglass.Idle;
+            // The choice popups cover the hourglass, so they mirror the remaining seconds themselves.
+            _timer.OnTick = (remaining, total) =>
+            {
+                _statusPanel.Hourglass.SetRemaining(remaining, total);
+                _choiceOverlay?.SetCountdown(remaining);
+            };
+            _timer.OnStopped = () =>
+            {
+                _statusPanel.Hourglass.Idle();
+                _choiceOverlay?.HideCountdown();
+            };
 
             _matchScreen.SetActive(false);
         }
 
-        // Ability-icon click: only the "always available, single click" heroes
-        // route through here. Rogue asks during the trust/challenge decision,
-        // Priest replaces a normal guess via its own dedicated button -- both
-        // have their own entry points below instead.
+        // The "single click" active abilities. Rogue is used from the trust/challenge
+        // popup and Priest opens its own position picker -- see RefreshMyAbilityUI,
+        // which decides what the portrait's ability button does for each hero.
         private void OnMyAbilityClicked()
         {
             if (_state == null || _state.PlayerAbilityCharges <= 0) return;
@@ -905,12 +929,58 @@ namespace LiarsBatting.Presentation
             RefreshMyAbilityUI();
         }
 
+        // The ability button under my portrait: active heroes get "능력 사용 (남은/전체)",
+        // passive heroes get "패시브 설명" (nothing to use -- the button just explains it).
         private void RefreshMyAbilityUI()
         {
             if (_state == null) return;
             var info = HeroCatalog.Get(_state.PlayerHero);
-            _myHeroPortrait.RefreshCharges(_state.PlayerAbilityCharges, info.Charges);
-            RefreshAbilityIconClickability();
+
+            if (info.Charges <= 0)
+            {
+                _myHeroPortrait.SetAbilityButton("패시브 설명", true, ShowMyAbilityDescription);
+                return;
+            }
+
+            int charges = _state.PlayerAbilityCharges;
+            if (_state.PlayerHero == HeroId.Warrior && _state.PlayerExtraTurnPending)
+            {
+                _myHeroPortrait.SetAbilityButton("턴 유지 예약됨", false, null);
+                return;
+            }
+            if (charges <= 0)
+            {
+                _myHeroPortrait.SetAbilityButton("사용 완료", false, null);
+                return;
+            }
+
+            string label = $"능력 사용 {charges}/{info.Charges}";
+            switch (_state.PlayerHero)
+            {
+                case HeroId.Priest:
+                    // A Priest query replaces a normal guess, so it's only usable on my own attack turn.
+                    _myHeroPortrait.SetAbilityButton(label, _myTurnActive, ShowPriestPositionPicker);
+                    break;
+                case HeroId.Rogue:
+                    _myHeroPortrait.SetAbilityButton(label, true, ShowRogueUsageHint);
+                    break;
+                default:
+                    _myHeroPortrait.SetAbilityButton(label, true, OnMyAbilityClicked);
+                    break;
+            }
+        }
+
+        private void ShowMyAbilityDescription()
+        {
+            var info = HeroCatalog.Get(_state.PlayerHero);
+            _choiceOverlay.Show($"{info.AbilityName} (패시브)\n{info.AbilityDescription}\n\n별도로 사용하지 않아도 자동으로 적용됩니다.",
+                ("확인", () => { }));
+        }
+
+        // Rogue's ability needs a response to judge, so it can't be fired from here.
+        private void ShowRogueUsageHint()
+        {
+            _choiceOverlay.Show("진실 간파는 상대의 응답을 판단하는 선택창에서\n'진실 간파' 버튼으로 사용합니다.", ("확인", () => { }));
         }
 
         private static int PickRandomOpenIndex(bool[] revealed)
@@ -921,14 +991,12 @@ namespace LiarsBatting.Presentation
             return open.Count > 0 ? open[UnityEngine.Random.Range(0, open.Count)] : -1;
         }
 
-        // Priest's query button lives next to the attack picker (not on the hero
-        // portrait) since it's an ALTERNATIVE to submitting a normal guess this
-        // turn, not a free side action.
-        private void RefreshPriestButtonVisibility(bool myTurnActive)
+        // Tracks whether it's my attack turn right now, which is what gates the Priest
+        // button (it's an ALTERNATIVE to submitting a normal guess this turn).
+        private void SetMyTurnActive(bool active)
         {
-            bool eligible = _state != null && _state.PlayerHero == HeroId.Priest && _state.PlayerAbilityCharges > 0;
-            _priestButton.gameObject.SetActive(eligible);
-            _priestButton.interactable = eligible && myTurnActive;
+            _myTurnActive = active;
+            RefreshMyAbilityUI();
         }
 
         private void ShowPriestPositionPicker()
@@ -960,7 +1028,7 @@ namespace LiarsBatting.Presentation
             _timer.Stop();
             _state.PlayerAbilityCharges--;
             RefreshMyAbilityUI();
-            RefreshPriestButtonVisibility(false);
+            SetMyTurnActive(false);
             _attackPicker.SetInteractable(false);
             _attackPicker.ResetAll();
 
@@ -1018,6 +1086,40 @@ namespace LiarsBatting.Presentation
             _setupScreen.SetActive(target == _setupScreen);
             _matchScreen.SetActive(target == _matchScreen);
             _timer.ShowBadge = target != _matchScreen; // the hourglass replaces the header badge in a match
+            _surrenderButton.gameObject.SetActive(false); // re-shown once the match actually starts
+        }
+
+        private void OnSurrenderClicked()
+        {
+            _choiceOverlay.ShowMixed("정말 항복하시겠습니까?\n항복하면 패배로 처리됩니다.",
+                ("항복", UITheme.Clay, Surrender),
+                ("계속 플레이", UITheme.Accent, () => { }));
+        }
+
+        private void Surrender()
+        {
+            const string message = ""; // my own surrender shows just the defeat title, no verdict line
+            if (_isOnlineMatch)
+            {
+                _network.SubmitSurrender();
+                EndOnlineGame(false, message);
+            }
+            else
+            {
+                EndGame(false, message);
+            }
+        }
+
+        // A turn announcement that is still fading in/out would otherwise fire its
+        // "start the turn" callback underneath the result popup.
+        private void CancelTurnAnnouncement()
+        {
+            if (_turnAnnouncementRoutine != null)
+            {
+                StopCoroutine(_turnAnnouncementRoutine);
+                _turnAnnouncementRoutine = null;
+            }
+            if (_turnAnnouncementRoot != null) _turnAnnouncementRoot.SetActive(false);
         }
 
         private void ShowNicknameScreen()
@@ -1064,9 +1166,11 @@ namespace LiarsBatting.Presentation
             _state.PlayerSecret = playerSecret;
 
             ShowOnly(_matchScreen);
-            _myHeroPortrait.SetHero(_state.PlayerHero, _state.PlayerAbilityCharges);
+            _surrenderButton.gameObject.SetActive(true);
+            _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
-            RefreshAbilityIconClickability();
+            _myTurnActive = false;
+            RefreshMyAbilityUI();
             _statusPanel.ShowMySecret(playerSecret);
             _statusPanel.OpponentAttackHistory.Clear();
             _statusPanel.MyAttackHistory.Clear();
@@ -1077,25 +1181,16 @@ namespace LiarsBatting.Presentation
             else BeginPlayerAttackTurn();
         }
 
-        // Rogue and Priest don't use the ability-icon click at all (Rogue offers
-        // its button inside the trust/challenge prompt, Priest gets its own
-        // button next to the attack picker) -- so the icon shouldn't look
-        // clickable for them even while they have charges left.
-        private void RefreshAbilityIconClickability()
-        {
-            bool iconDriven = _state.PlayerHero != HeroId.Rogue && _state.PlayerHero != HeroId.Priest;
-            _myHeroPortrait.SetAbilityInteractable(iconDriven && _state.PlayerAbilityCharges > 0);
-        }
-
         private void OnOnlineSecretChosen(int[] playerSecret)
         {
             _state.PlayerSecret = playerSecret;
             _state.AiSecret = new int[4]; // opponent's secret is never known locally; filled in one digit at a time by reveals
 
             ShowOnly(_matchScreen);
-            _myHeroPortrait.SetHero(_state.PlayerHero, _state.PlayerAbilityCharges);
+            _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
-            RefreshAbilityIconClickability();
+            _myTurnActive = false;
+            RefreshMyAbilityUI();
             _statusPanel.ShowMySecret(playerSecret);
             _statusPanel.OpponentAttackHistory.Clear();
             _statusPanel.MyAttackHistory.Clear();
@@ -1116,9 +1211,18 @@ namespace LiarsBatting.Presentation
             _statusPanel.LieTokens.Set(_state.PlayerLieTokens);
         }
 
+        // Bumped whenever a match ends. A delayed step scheduled before that (the AI "thinking",
+        // a turn handover) is dropped instead of firing underneath the result popup -- which
+        // matters now that a match can end at any moment by surrendering.
+        private int _matchSession;
+
         private void RunAfter(float seconds, Action action)
         {
-            StartCoroutine(RunAfterRoutine(seconds, action));
+            int session = _matchSession;
+            StartCoroutine(RunAfterRoutine(seconds, () =>
+            {
+                if (session == _matchSession) action?.Invoke();
+            }));
         }
 
         private void ShowTurnAnnouncement(string message, Action onComplete)
@@ -1200,7 +1304,7 @@ namespace LiarsBatting.Presentation
             RefreshTokenHeader();
             _headerText.text = "내 턴 — 상대 비밀번호를 추리하세요";
             _attackPicker.SetInteractable(true);
-            RefreshPriestButtonVisibility(true);
+            SetMyTurnActive(true);
             _timer.Start(GuessSeconds, () =>
             {
                 _attackPicker.SetInteractable(false);
@@ -1330,7 +1434,7 @@ namespace LiarsBatting.Presentation
             RefreshTokenHeader();
             _headerText.text = "상대 턴 — 상대가 추리하는 중...";
             _attackPicker.SetInteractable(false);
-            RefreshPriestButtonVisibility(false);
+            SetMyTurnActive(false);
             RunAfter(AiGuessDelaySeconds, BeginAiAttackTurnNow);
         }
 
@@ -1339,7 +1443,7 @@ namespace LiarsBatting.Presentation
             RefreshTokenHeader();
             _headerText.text = "상대 턴 — 방어 결과를 확인하세요";
             _attackPicker.SetInteractable(false);
-            RefreshPriestButtonVisibility(false);
+            SetMyTurnActive(false);
 
             if (_state.AiHero == HeroId.Wizard && _ai.ShouldUseWizardReveal(_state.AiAbilityCharges))
                 AiUseWizard();
@@ -1480,7 +1584,7 @@ namespace LiarsBatting.Presentation
         // Shows the true result of the opponent's guess (computed against my real
         // secret) and lets me choose to report it truthfully or spend a LIE TOKEN.
         // A true 4-strike normally can't be lied about -- Hunter is the exception.
-        // Owns its own 10s timer: defaults to reporting the truth on timeout.
+        // Owns its own 20s timer: defaults to reporting the truth on timeout.
         private void PromptDefenseChoice(int[] opponentGuess, JudgeResult trueResult, int lieTokensLeft,
             bool canLieAboutWin, Action<JudgeResult, bool> onChoice)
         {
@@ -1550,7 +1654,7 @@ namespace LiarsBatting.Presentation
             _choiceOverlay.ShowMixed($"거짓말: {strike} 스트라이크로 정했습니다. 볼은 몇 개로 알려줄까요?", buttons);
         }
 
-        // Shared trust/challenge decision (point 4). Owns its own 10s timer:
+        // Shared trust/challenge decision (point 4). Owns its own 20s timer:
         // defaults to trusting the report on timeout.
         // knownLieStatusForRogue: AI mode already knows the answer locally (pass
         // it directly); online mode passes null and the Rogue button triggers a
@@ -1628,11 +1732,14 @@ namespace LiarsBatting.Presentation
             _timer.Start(TrustChoiceSeconds, ResolveTrust);
         }
 
-        private void EndGame(bool playerWon)
+        private void EndGame(bool playerWon, string message = null)
         {
             _timer.Stop();
+            _matchSession++;
+            CancelTurnAnnouncement();
+            _surrenderButton.gameObject.SetActive(false);
             _resultPopup.Show(playerWon,
-                playerWon ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다",
+                message ?? (playerWon ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
                 playerWon ? _state.AiSecret : _state.PlayerSecret);
         }
     }

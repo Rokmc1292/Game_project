@@ -14,6 +14,7 @@ namespace LiarsBatting.Presentation
         private readonly Text _message;
         private readonly RectTransform _buttonRow;
         private readonly RectTransform _box;
+        private readonly Text _countdown;
 
         public ChoiceOverlayView(Transform parent)
         {
@@ -41,8 +42,33 @@ namespace LiarsBatting.Presentation
             // height of the tall message box and stretches every button into a tall block.
             UiFactory.SetFlexible(_buttonRow, 1, 0);
 
+            // The HUD hourglass sits behind this popup's dim backdrop, so a timed decision shows its
+            // remaining seconds here (top-left of the box; the history buttons use the top-right).
+            _countdown = UiFactory.Text(box, "", 24, UITheme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
+            _countdown.raycastTarget = false;
+            var countdownLayout = _countdown.GetComponent<LayoutElement>();
+            if (countdownLayout == null) countdownLayout = _countdown.gameObject.AddComponent<LayoutElement>();
+            countdownLayout.ignoreLayout = true;   // not part of the box's vertical layout
+            var countdownRt = (RectTransform)_countdown.transform;
+            countdownRt.anchorMin = new Vector2(0, 1);
+            countdownRt.anchorMax = new Vector2(0, 1);
+            countdownRt.pivot = new Vector2(0, 1);
+            countdownRt.anchoredPosition = new Vector2(20, -12);
+            countdownRt.sizeDelta = new Vector2(220, 34);
+            _countdown.gameObject.SetActive(false);
+
             _root.SetActive(false);
         }
+
+        // Called every frame by the shared countdown while a timed decision is running.
+        public void SetCountdown(float remaining)
+        {
+            _countdown.gameObject.SetActive(true);
+            _countdown.text = $"남은 시간 {Mathf.CeilToInt(remaining)}초";
+            _countdown.color = remaining <= 5f ? UITheme.Clay : new Color32(214, 160, 70, 255);
+        }
+
+        public void HideCountdown() => _countdown.gameObject.SetActive(false);
 
         // Two small buttons in the box's top-right corner: hovering one shows the matching guess history
         // while the player decides (the history buttons on the HUD sit behind this popup's backdrop).
