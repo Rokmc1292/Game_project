@@ -30,6 +30,7 @@ namespace LiarsBatting.Presentation
         private readonly Button _submitButton;
         private readonly Action<int[]> _onSubmit;
         private readonly CardFlightAnimator _flightAnimator;
+        private readonly bool _isAttackPicker;
 
         private static readonly Color TrayUsedTint = new Color(0.30f, 0.30f, 0.30f, 1f);
         private static readonly Color TrayDisabledTint = new Color(0.20f, 0.20f, 0.20f, 1f);
@@ -65,6 +66,7 @@ namespace LiarsBatting.Presentation
             Action<int[]> onSubmit, Vector2 slotCard, Vector2 trayCard)
         {
             _onSubmit = onSubmit;
+            _isAttackPicker = true;
             _flightAnimator = GetFlightAnimator(slotsParent);
 
             var slotsRow = BuildSlots(slotsParent, slotCard, 16f);
@@ -98,7 +100,12 @@ namespace LiarsBatting.Presentation
                 img.preserveAspect = true;
                 var btn = slotGo.GetComponent<Button>();
                 btn.targetGraphic = img;
-                btn.onClick.AddListener(() => ClearSlot(index));
+                btn.onClick.AddListener(() =>
+                {
+                    if (_slotValues[index] >= 0) GameAudio.Play("SFX_Card_Deselect");
+                    ClearSlot(index);
+                });
+                slotGo.AddComponent<ButtonHoverSound>().ClipName = "SFX_Card_Hover";
 
                 _slots[i] = slotRt;
                 _slotImages[i] = img;
@@ -126,6 +133,7 @@ namespace LiarsBatting.Presentation
                 var btn = cardGo.GetComponent<Button>();
                 btn.targetGraphic = img;
                 btn.onClick.AddListener(() => PlaceDigit(d));
+                cardGo.AddComponent<ButtonHoverSound>().ClipName = "SFX_Card_Hover";
 
                 _trayButtons[d] = btn;
                 _trayImages[d] = img;
@@ -139,6 +147,7 @@ namespace LiarsBatting.Presentation
             int emptyIndex = Array.IndexOf(_slotValues, -1);
             if (emptyIndex < 0) return;
 
+            GameAudio.Play("SFX_Card_Select");
             _slotValues[emptyIndex] = digit;
             _slotImages[emptyIndex].sprite = CardArt.Digit(digit);
             _slotImages[emptyIndex].color = Color.white;
@@ -226,6 +235,7 @@ namespace LiarsBatting.Presentation
         private void Submit()
         {
             if (Array.IndexOf(_slotValues, -1) >= 0) return;
+            if (_isAttackPicker) GameAudio.Play("SFX_Guess_Submit");
             var result = new[] { _slotValues[0], _slotValues[1], _slotValues[2], _slotValues[3] };
             ResetAll();
             _onSubmit?.Invoke(result);

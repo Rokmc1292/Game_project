@@ -146,6 +146,7 @@ namespace LiarsBatting.Presentation
 
             Root.gameObject.SetActive(true);
             Root.SetAsLastSibling();
+            GameAudio.Play("SFX_Result_Dim_Drop");
             _routine = _host.StartCoroutine(PlayIntro(won, hasDigits ? digits : null));
         }
 
@@ -160,9 +161,21 @@ namespace LiarsBatting.Presentation
             float total = buttonAt + ButtonFadeDuration;
 
             float t = 0f;
+            bool stampPlayed = false;
+            int nextCardSound = 0;
             while (t < total)
             {
                 t += Time.unscaledDeltaTime;
+                if (!stampPlayed && t >= stampAt + StampDuration)
+                {
+                    stampPlayed = true;
+                    GameAudio.Play(won ? "SFX_Result_Stamp_Win" : "SFX_Result_Stamp_Lose");
+                }
+                if (hasDigits && nextCardSound < 4 && t >= cardsAt + nextCardSound * CardStep)
+                {
+                    GameAudio.Play("SFX_Result_Card_Reveal");
+                    nextCardSound++;
+                }
 
                 _dim.color = new Color(0f, 0f, 0f, DimAlpha * EaseOut(Seg(t, 0f, DimDuration)));
 

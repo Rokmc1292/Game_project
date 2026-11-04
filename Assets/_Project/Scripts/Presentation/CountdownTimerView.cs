@@ -69,9 +69,16 @@ namespace LiarsBatting.Presentation
             _root.SetActive(ShowBadge);
             float total = seconds;
             float remaining = seconds;
+            int lastTick = -1;
             while (remaining > 0f)
             {
-                _text.text = Mathf.CeilToInt(remaining).ToString();
+                int displayedSeconds = Mathf.CeilToInt(remaining);
+                _text.text = displayedSeconds.ToString();
+                if (displayedSeconds <= 5 && displayedSeconds != lastTick)
+                {
+                    lastTick = displayedSeconds;
+                    GameAudio.Play("SFX_Timer_Tick_Urgent", 1f + (5 - displayedSeconds) * 0.05f);
+                }
                 _fill.localScale = new Vector3(Mathf.Clamp01(remaining / total), 1f, 1f);
                 bool urgent = remaining <= 3f;
                 _fill.GetComponent<Image>().color = urgent ? UITheme.Clay : Brass;
@@ -83,6 +90,7 @@ namespace LiarsBatting.Presentation
             _routine = null;
             _root.SetActive(false);
             OnStopped?.Invoke();
+            GameAudio.Play("SFX_Timer_Timeout");
             onExpired?.Invoke();
         }
     }

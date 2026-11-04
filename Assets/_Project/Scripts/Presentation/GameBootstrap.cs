@@ -101,6 +101,7 @@ namespace LiarsBatting.Presentation
 
         private void Start()
         {
+            GameAudio.Initialize();
             UiFactory.EnsureEventSystem();
             var canvas = UiFactory.CreateCanvas();
             DontDestroyOnLoad(canvas.gameObject);
@@ -419,6 +420,7 @@ namespace LiarsBatting.Presentation
             _inviteWatcher.WatchForIncomingInvite(
                 (fromNickname, matchId) =>
                 {
+                    GameAudio.Play("SFX_Invite_Notification");
                     _choiceOverlay.ShowMixed($"{fromNickname}님이 대전을 신청했습니다.",
                         ("수락", UITheme.Accent, () =>
                         {
@@ -469,6 +471,7 @@ namespace LiarsBatting.Presentation
                 _isOnlineMatch = true;
                 _state = new GameState();
 
+                GameAudio.Play("SFX_Match_Found");
                 ShowHeroSelectScreen();
             }, error =>
             {
@@ -524,7 +527,13 @@ namespace LiarsBatting.Presentation
                     });
             };
 
-            _network.OnChallengeNeedsMyJudgement += () => _network.ResolveChallenge(_network.DidIActuallyLie());
+            _network.OnChallengeNeedsMyJudgement += () =>
+            {
+                bool wasLie = _network.DidIActuallyLie();
+                GameAudio.Play("SFX_Challenge_Doubt");
+                GameAudio.Play(wasLie ? "SFX_Reveal_Punished" : "SFX_Reveal_Busted");
+                _network.ResolveChallenge(wasLie);
+            };
 
             _network.OnIMustReveal += () =>
             {
@@ -533,6 +542,7 @@ namespace LiarsBatting.Presentation
                     // I challenged but the opponent told the truth -- I'm the one who has to open a digit.
                     _awaitingMyChallengeOutcome = false;
                     _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
+                    GameAudio.Play("SFX_Reveal_Punished");
                 }
                 PromptPlayerRevealChoice("비밀번호 한 자리를 공개해야 합니다.", index =>
                 {
@@ -549,6 +559,7 @@ namespace LiarsBatting.Presentation
                     // I challenged and the opponent now has to open a digit: their answer was a lie.
                     _awaitingMyChallengeOutcome = false;
                     _statusPanel.MyAttackHistory.MarkLastRowAsLie();
+                    GameAudio.Play("SFX_Reveal_Busted");
                 }
                 _state.AiSecret[index] = digit;
                 _state.AiRevealed[index] = true;
@@ -609,6 +620,7 @@ namespace LiarsBatting.Presentation
 
         private void BeginOnlineAttackTurn()
         {
+            GameAudio.Music("BGM_Match_Tension");
             _timer.Stop();
             _attackPicker.SetInteractable(false);
             ShowTurnAnnouncement("나의 턴", BeginOnlineAttackTurnAfterAnnouncement);
@@ -629,6 +641,7 @@ namespace LiarsBatting.Presentation
 
         private void BeginOnlineWaitTurn()
         {
+            GameAudio.Music("BGM_Match_Tension");
             _timer.Stop();
             _attackPicker.SetInteractable(false);
             ShowTurnAnnouncement("상대 턴", BeginOnlineWaitTurnAfterAnnouncement);
@@ -662,6 +675,7 @@ namespace LiarsBatting.Presentation
             _matchSession++;
             CancelTurnAnnouncement();
             _surrenderButton.gameObject.SetActive(false);
+            GameAudio.Music(won ? "BGM_Win_Stinger" : "BGM_Lose_Stinger", false);
             // Online, the opponent's secret isn't known on a win, so only a defeat shows cards (my own secret).
             _resultPopup.Show(won,
                 message ?? (won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
@@ -699,6 +713,8 @@ namespace LiarsBatting.Presentation
                 img.color = UITheme.Surface2;                        // fallback if the plate sprites are missing
                 var btn = cardGo.GetComponent<Button>();
                 btn.targetGraphic = img;
+                cardGo.AddComponent<ButtonHoverSound>();
+                btn.onClick.AddListener(() => GameAudio.Play("SFX_UI_Click", volume: 0.6f));
                 btn.onClick.AddListener(() => OnHeroChosen(heroId));
                 _heroSelectButtons.Add(btn);
 
@@ -891,6 +907,7 @@ namespace LiarsBatting.Presentation
 
         private void UsePaladinHeal()
         {
+            GameAudio.Play("SFX_Hero_Paladin_Restore");
             _state.PlayerAbilityCharges--;
             _state.PlayerLieTokens = Mathf.Min(_state.PlayerLieTokens + 1, 2);
             RefreshTokenHeader();
@@ -903,6 +920,7 @@ namespace LiarsBatting.Presentation
         // any time and it just pre-arms my next attack.
         private void UseWarriorAbility()
         {
+            GameAudio.Play("SFX_Hero_Warrior_Rush");
             _state.PlayerAbilityCharges--;
             _state.PlayerExtraTurnPending = true;
             RefreshMyAbilityUI();
@@ -910,6 +928,7 @@ namespace LiarsBatting.Presentation
 
         private void UseWizardAbility()
         {
+            GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
             _state.PlayerAbilityCharges--;
             int myIdx = PickRandomOpenIndex(_state.PlayerRevealed);
             if (myIdx >= 0)
@@ -1025,6 +1044,7 @@ namespace LiarsBatting.Presentation
 
         private void OnPriestQuerySubmitted(int position, int guessedDigit)
         {
+            GameAudio.Play("SFX_Hero_Priest_Inquiry");
             _timer.Stop();
             _state.PlayerAbilityCharges--;
             RefreshMyAbilityUI();
@@ -1124,6 +1144,7 @@ namespace LiarsBatting.Presentation
 
         private void ShowNicknameScreen()
         {
+            GameAudio.Music("BGM_Lobby_Noir");
             ShowOnly(_nicknameScreen);
             _headerText.text = "라이어스 배팅";
             _tokenText.text = "";
@@ -1131,6 +1152,7 @@ namespace LiarsBatting.Presentation
 
         private void ShowMainMenu()
         {
+            GameAudio.Music("BGM_Lobby_Noir");
             _timer.Stop();
             ShowOnly(_mainMenuScreen);
             _menuGreetingText.text = $"{_nickname}님, 환영합니다";
@@ -1144,6 +1166,7 @@ namespace LiarsBatting.Presentation
         // then hands off to the shared hero-select screen.
         private void StartAiMatch()
         {
+            GameAudio.Play("SFX_Match_Found");
             _isOnlineMatch = false;
             _inviteWatcher?.StopPolling();
 
@@ -1165,6 +1188,7 @@ namespace LiarsBatting.Presentation
 
             _state.PlayerSecret = playerSecret;
 
+            GameAudio.Music("BGM_Match_Tension");
             ShowOnly(_matchScreen);
             _surrenderButton.gameObject.SetActive(true);
             _myHeroPortrait.SetHero(_state.PlayerHero);
@@ -1186,6 +1210,7 @@ namespace LiarsBatting.Presentation
             _state.PlayerSecret = playerSecret;
             _state.AiSecret = new int[4]; // opponent's secret is never known locally; filled in one digit at a time by reveals
 
+            GameAudio.Music("BGM_Match_Tension");
             ShowOnly(_matchScreen);
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
@@ -1227,6 +1252,7 @@ namespace LiarsBatting.Presentation
 
         private void ShowTurnAnnouncement(string message, Action onComplete)
         {
+            GameAudio.Play(message == "나의 턴" ? "SFX_Turn_Start_My" : "SFX_Turn_Start_Opponent");
             if (_turnAnnouncementRoot == null)
             {
                 _turnAnnouncementRoot = new GameObject("TurnAnnouncement", typeof(RectTransform), typeof(Image));
@@ -1294,6 +1320,7 @@ namespace LiarsBatting.Presentation
 
         private void BeginPlayerAttackTurn(bool announce = true)
         {
+            GameAudio.Music("BGM_Match_Tension");
             if (announce)
             {
                 _timer.Stop();
@@ -1406,12 +1433,14 @@ namespace LiarsBatting.Presentation
                 {
                     if (aiLied)
                     {
+                        GameAudio.Play("SFX_Reveal_Busted");
                         // Caught it: the AI has to open one of its own digits.
                         _statusPanel.MyAttackHistory.MarkLastRowAsLie();
                         RevealAiDigit(prefix: "적중! 상대가 거짓말을 했습니다.", onDone: EndMyAttackTurnAndPassToOpponent);
                     }
                     else
                     {
+                        GameAudio.Play("SFX_Reveal_Punished");
                         // Wrong accusation: the player opens one of their own digits.
                         // The opponent's answer is now proven true -- keep that in the log.
                         _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
@@ -1424,6 +1453,7 @@ namespace LiarsBatting.Presentation
         // The opponent "thinks" for a moment before its guess shows up.
         private void BeginAiAttackTurn(bool announce = true)
         {
+            GameAudio.Music("BGM_Match_Tension");
             if (announce)
             {
                 _timer.Stop();
@@ -1498,6 +1528,7 @@ namespace LiarsBatting.Presentation
 
                 if (playerLied)
                 {
+                    GameAudio.Play("SFX_Reveal_Punished");
                     // Caught: the reported value is known-false, so there's nothing
                     // honest to narrow the AI's model by this turn -- it only gains
                     // the digit reveal, not extra information.
@@ -1506,6 +1537,7 @@ namespace LiarsBatting.Presentation
                 }
                 else
                 {
+                    GameAudio.Play("SFX_Reveal_Busted");
                     // Wrong accusation: the AI opens one of its own digits, but the
                     // (confirmed-true) result is still good information to narrow by.
                     _ai.NarrowByOwnGuess(guess, reported);
@@ -1591,6 +1623,7 @@ namespace LiarsBatting.Presentation
             void Resolve(JudgeResult result, bool usedToken)
             {
                 _timer.Stop();
+                GameAudio.Play(usedToken ? "SFX_LieToken_Spend" : "SFX_Truth_Declare");
                 onChoice(result, usedToken);
             }
 
@@ -1662,8 +1695,19 @@ namespace LiarsBatting.Presentation
         private void PromptTrustOrChallenge(JudgeResult reported, bool? knownLieStatusForRogue,
             Action onTrust, Action onChallenge)
         {
-            void ResolveTrust() { _timer.Stop(); onTrust(); }
-            void ResolveChallenge() { _timer.Stop(); onChallenge(); }
+            GameAudio.Play("SFX_Response_Received");
+            RunAfter(0.2f, () =>
+            {
+                if (reported.IsOut) GameAudio.Play("SFX_Judge_Out");
+                else if (reported.Strike > 0) GameAudio.Play("SFX_Judge_Strike");
+                else if (reported.Ball > 0) GameAudio.Play("SFX_Judge_Ball");
+            });
+            if (reported.Strike > 0 && reported.Ball > 0)
+                RunAfter(0.45f, () => GameAudio.Play("SFX_Judge_Ball"));
+            GameAudio.Music(reported.Strike == 3 ? "BGM_Match_Climax" : "BGM_Match_Tension");
+
+            void ResolveTrust() { _timer.Stop(); GameAudio.Play("SFX_Trust_Accept"); onTrust(); }
+            void ResolveChallenge() { _timer.Stop(); GameAudio.Play("SFX_Challenge_Doubt"); onChallenge(); }
 
             string resultText = reported.IsOut ? "OUT" : $"{reported.Strike}S {reported.Ball}B";
             string message = $"상대가 알려준 결과: {resultText}\n믿으시겠습니까, 거짓말 같습니까?";
@@ -1684,6 +1728,7 @@ namespace LiarsBatting.Presentation
                 options.Add(($"진실 간파 ({_state.PlayerAbilityCharges}회)", UITheme.StrikeFg, (Action)(() =>
                 {
                     _timer.Stop();
+                    GameAudio.Play("SFX_Hero_Rogue_Insight");
                     _state.PlayerAbilityCharges--;
                     RefreshMyAbilityUI();
 
@@ -1738,6 +1783,7 @@ namespace LiarsBatting.Presentation
             _matchSession++;
             CancelTurnAnnouncement();
             _surrenderButton.gameObject.SetActive(false);
+            GameAudio.Music(playerWon ? "BGM_Win_Stinger" : "BGM_Lose_Stinger", false);
             _resultPopup.Show(playerWon,
                 message ?? (playerWon ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
                 playerWon ? _state.AiSecret : _state.PlayerSecret);

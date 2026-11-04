@@ -197,6 +197,8 @@ namespace LiarsBatting.Presentation
             img.color = bg;
             var btn = go.GetComponent<Button>();
             btn.targetGraphic = img;
+            go.AddComponent<ButtonHoverSound>();
+            btn.onClick.AddListener(() => GameAudio.Play("SFX_UI_Click", volume: 0.6f));
             btn.onClick.AddListener(() => onClick?.Invoke());
 
             var txt = Text(rt, label, fontSize, fg, TextAnchor.MiddleCenter, FontStyle.Bold);
