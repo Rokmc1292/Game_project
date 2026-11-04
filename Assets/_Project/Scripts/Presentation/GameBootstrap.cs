@@ -98,6 +98,11 @@ namespace LiarsBatting.Presentation
         private Button _surrenderButton;
         private ResultPopupView _resultPopup;
         private Text _menuGreetingText;
+        private GameObject _soundSettings;
+        private Slider _musicSlider;
+        private Slider _effectsSlider;
+        private Toggle _musicMute;
+        private Toggle _effectsMute;
 
         private void Start()
         {
@@ -287,6 +292,156 @@ namespace LiarsBatting.Presentation
 
             var resetBtn = UiFactory.Button(centered, "닉네임 변경", UITheme.Bg, UITheme.Muted, ShowNicknameScreen, 12);
             UiFactory.SetHeight(resetBtn, 30);
+
+            var settingsBtn = UiFactory.Button(_mainMenuScreen.transform, "설정", UITheme.Surface2, UITheme.Ink, ShowSoundSettings, 14);
+            settingsBtn.gameObject.name = "SoundSettingsButton";
+            var settingsButtonRect = (RectTransform)settingsBtn.transform;
+            settingsButtonRect.anchorMin = new Vector2(1f, 1f);
+            settingsButtonRect.anchorMax = new Vector2(1f, 1f);
+            settingsButtonRect.pivot = new Vector2(1f, 1f);
+            settingsButtonRect.anchoredPosition = new Vector2(-20f, -20f);
+            settingsButtonRect.sizeDelta = new Vector2(100f, 40f);
+            MenuButtonStyle.Apply(settingsBtn, primary: false);
+
+            BuildSoundSettings(_mainMenuScreen.transform);
+        }
+
+        private void BuildSoundSettings(Transform parent)
+        {
+            var backdrop = UiFactory.FullScreen(parent, "SoundSettings", new Color(0f, 0f, 0f, 0.8f));
+            _soundSettings = backdrop.gameObject;
+            var centered = UiFactory.HorizontalGroup(backdrop, "SettingsCenter", childAlign: TextAnchor.MiddleCenter);
+            centered.anchorMin = new Vector2(0.04f, 0.5f);
+            centered.anchorMax = new Vector2(0.96f, 0.5f);
+            centered.sizeDelta = new Vector2(0f, 310f);
+            centered.anchoredPosition = Vector2.zero;
+
+            var panel = UiFactory.Panel(centered, "SettingsPanel", UITheme.Surface2);
+            var panelLayout = panel.gameObject.AddComponent<LayoutElement>();
+            panelLayout.preferredWidth = 600f;
+            MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
+
+            var content = UiFactory.VerticalGroup(panel, "Content", spacing: 12,
+                padding: new RectOffset(28, 28, 20, 20));
+            UiFactory.StretchToFillParent(content);
+            var title = UiFactory.Text(content, "사운드 설정", 22, UITheme.Ink,
+                TextAnchor.MiddleLeft, FontStyle.Bold);
+            UiFactory.SetHeight(title, 32);
+
+            BuildSoundRow(content, "배경음", "Music", GameAudio.SetMusicLevel,
+                GameAudio.SetMusicMuted, out _musicSlider, out _musicMute);
+            BuildSoundRow(content, "효과음", "Effects", GameAudio.SetEffectsLevel,
+                GameAudio.SetEffectsMuted, out _effectsSlider, out _effectsMute);
+
+            var close = UiFactory.Button(content, "닫기", UITheme.Surface2, UITheme.Ink, CloseSoundSettings, 14);
+            close.gameObject.name = "CloseSoundSettingsButton";
+            UiFactory.SetHeight(close, 38);
+            MenuButtonStyle.Apply(close, primary: false);
+            _soundSettings.SetActive(false);
+        }
+
+        private static void BuildSoundRow(Transform parent, string label, string name,
+            Action<float> onVolume, Action<bool> onMute, out Slider slider, out Toggle toggle)
+        {
+            var section = UiFactory.VerticalGroup(parent, name + "Settings", spacing: 4);
+            UiFactory.SetHeight(section, 72);
+            var heading = UiFactory.Text(section, label, 16, UITheme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
+            UiFactory.SetHeight(heading, 24);
+            var row = UiFactory.HorizontalGroup(section, "Controls", spacing: 12);
+            UiFactory.SetHeight(row, 40);
+
+            var sliderObject = new GameObject(name + "Slider", typeof(RectTransform), typeof(Image), typeof(Slider));
+            var sliderRect = (RectTransform)sliderObject.transform;
+            sliderRect.SetParent(row, false);
+            sliderObject.GetComponent<Image>().color = Color.clear;
+            UiFactory.SetFlexible(sliderRect);
+            slider = sliderObject.GetComponent<Slider>();
+            slider.minValue = 0f;
+            slider.maxValue = 1f;
+
+            var track = UiFactory.Panel(sliderRect, "Track", UITheme.Border);
+            track.anchorMin = new Vector2(0f, 0.5f);
+            track.anchorMax = new Vector2(1f, 0.5f);
+            track.offsetMin = new Vector2(9f, -3f);
+            track.offsetMax = new Vector2(-9f, 3f);
+            track.GetComponent<Image>().raycastTarget = false;
+
+            var fillArea = new GameObject("FillArea", typeof(RectTransform)).GetComponent<RectTransform>();
+            fillArea.SetParent(sliderRect, false);
+            fillArea.anchorMin = new Vector2(0f, 0.5f);
+            fillArea.anchorMax = new Vector2(1f, 0.5f);
+            fillArea.offsetMin = new Vector2(9f, -3f);
+            fillArea.offsetMax = new Vector2(-9f, 3f);
+            var fill = UiFactory.Panel(fillArea, "Fill", UITheme.Clay);
+            fill.anchorMin = Vector2.zero;
+            fill.anchorMax = Vector2.one;
+            fill.offsetMin = Vector2.zero;
+            fill.offsetMax = Vector2.zero;
+            fill.GetComponent<Image>().raycastTarget = false;
+            slider.fillRect = fill;
+
+            var handleArea = new GameObject("HandleArea", typeof(RectTransform)).GetComponent<RectTransform>();
+            handleArea.SetParent(sliderRect, false);
+            handleArea.anchorMin = Vector2.zero;
+            handleArea.anchorMax = Vector2.one;
+            handleArea.offsetMin = new Vector2(9f, 0f);
+            handleArea.offsetMax = new Vector2(-9f, 0f);
+            var handle = UiFactory.Panel(handleArea, "Handle", UITheme.Ink);
+            handle.sizeDelta = new Vector2(18f, 24f);
+            slider.handleRect = handle;
+            slider.targetGraphic = handle.GetComponent<Image>();
+
+            var percent = UiFactory.Text(row, "", 14, UITheme.Ink, TextAnchor.MiddleRight);
+            UiFactory.SetWidth(percent, 46);
+            var control = slider;
+            slider.onValueChanged.AddListener(value =>
+            {
+                percent.text = Mathf.RoundToInt(value * 100f) + "%";
+                onVolume(value);
+            });
+            percent.text = Mathf.RoundToInt(control.value * 100f) + "%";
+
+            var toggleObject = new GameObject(name + "Mute", typeof(RectTransform), typeof(Toggle));
+            var toggleRect = (RectTransform)toggleObject.transform;
+            toggleRect.SetParent(row, false);
+            UiFactory.SetWidth(toggleRect, 100);
+            toggle = toggleObject.GetComponent<Toggle>();
+            var box = UiFactory.Panel(toggleRect, "Box", UITheme.Border);
+            box.anchorMin = new Vector2(0f, 0.5f);
+            box.anchorMax = new Vector2(0f, 0.5f);
+            box.pivot = new Vector2(0f, 0.5f);
+            box.sizeDelta = new Vector2(24f, 24f);
+            box.anchoredPosition = Vector2.zero;
+            var check = UiFactory.Panel(box, "Check", UITheme.Clay);
+            check.anchorMin = Vector2.zero;
+            check.anchorMax = Vector2.one;
+            check.offsetMin = new Vector2(5f, 5f);
+            check.offsetMax = new Vector2(-5f, -5f);
+            check.GetComponent<Image>().raycastTarget = false;
+            toggle.targetGraphic = box.GetComponent<Image>();
+            toggle.graphic = check.GetComponent<Image>();
+            toggle.onValueChanged.AddListener(value => onMute(value));
+            var muteLabel = UiFactory.Text(toggleRect, "음소거", 14, UITheme.Ink, TextAnchor.MiddleLeft);
+            var muteLabelRect = (RectTransform)muteLabel.transform;
+            muteLabelRect.anchorMin = Vector2.zero;
+            muteLabelRect.anchorMax = Vector2.one;
+            muteLabelRect.offsetMin = new Vector2(32f, 0f);
+            muteLabelRect.offsetMax = Vector2.zero;
+        }
+
+        private void ShowSoundSettings()
+        {
+            _musicSlider.value = GameAudio.MusicLevel;
+            _effectsSlider.value = GameAudio.EffectsLevel;
+            _musicMute.isOn = GameAudio.MusicMuted;
+            _effectsMute.isOn = GameAudio.EffectsMuted;
+            _soundSettings.SetActive(true);
+        }
+
+        private void CloseSoundSettings()
+        {
+            GameAudio.SaveSettings();
+            _soundSettings.SetActive(false);
         }
 
         private void BuildRandomMatchScreen(Transform root)
@@ -1104,6 +1259,8 @@ namespace LiarsBatting.Presentation
         // choice modal) toggle independently on top of whichever is active.
         private void ShowOnly(GameObject target)
         {
+            if (_soundSettings != null && _soundSettings.activeSelf && target != _mainMenuScreen)
+                CloseSoundSettings();
             _nicknameScreen.SetActive(target == _nicknameScreen);
             _mainMenuScreen.SetActive(target == _mainMenuScreen);
             _randomMatchScreen.SetActive(target == _randomMatchScreen);

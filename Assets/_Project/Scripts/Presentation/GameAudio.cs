@@ -8,6 +8,11 @@ namespace LiarsBatting.Presentation
     {
         private const float MusicVolume = 0.28f;
         private const float EffectsVolume = 0.65f;
+        private const float DefaultVolume = 0.8f;
+        private const string MusicVolumeKey = "lb_audio_music_volume";
+        private const string EffectsVolumeKey = "lb_audio_effects_volume";
+        private const string MusicMutedKey = "lb_audio_music_muted";
+        private const string EffectsMutedKey = "lb_audio_effects_muted";
         private const int EffectVoices = 7;
         private static GameAudio _instance;
         private readonly Dictionary<string, AudioClip> _clips = new Dictionary<string, AudioClip>();
@@ -15,6 +20,7 @@ namespace LiarsBatting.Presentation
         private AudioSource[] _effects;
         private readonly int[] _voicePriority = new int[EffectVoices];
         private readonly long[] _voiceOrder = new long[EffectVoices];
+        private readonly float[] _voiceGain = new float[EffectVoices];
         private Coroutine _musicTransition;
         private string _musicName;
         private long _sequence;
@@ -22,6 +28,15 @@ namespace LiarsBatting.Presentation
         private float _duckGain = 1f;
         private float _duckTarget = 1f;
         private float _duckUntil;
+        private float _musicVolume;
+        private float _effectsVolume;
+        private bool _musicMuted;
+        private bool _effectsMuted;
+
+        public static float MusicLevel => _instance != null ? _instance._musicVolume : DefaultVolume;
+        public static float EffectsLevel => _instance != null ? _instance._effectsVolume : DefaultVolume;
+        public static bool MusicMuted => _instance != null && _instance._musicMuted;
+        public static bool EffectsMuted => _instance != null && _instance._effectsMuted;
 
         public static void Initialize()
         {
@@ -50,6 +65,10 @@ namespace LiarsBatting.Presentation
 
         private void Setup()
         {
+            _musicVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(MusicVolumeKey, DefaultVolume));
+            _effectsVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(EffectsVolumeKey, DefaultVolume));
+            _musicMuted = PlayerPrefs.GetInt(MusicMutedKey, 0) != 0;
+            _effectsMuted = PlayerPrefs.GetInt(EffectsMutedKey, 0) != 0;
             _clips.Clear();
             var catalog = Resources.Load<AudioCatalog>("AudioCatalog");
             if (catalog == null || catalog.Clips == null)
@@ -77,13 +96,68 @@ namespace LiarsBatting.Presentation
                 _effects[i].playOnAwake = false;
                 _effects[i].spatialBlend = 0f;
             }
+            ApplyVolumes();
         }
 
         private void Update()
         {
             if (Time.unscaledTime >= _duckUntil) _duckTarget = 1f;
             _duckGain = Mathf.MoveTowards(_duckGain, _duckTarget, Time.unscaledDeltaTime * 2f);
-            _music.volume = _musicGain * _duckGain;
+            ApplyMusicVolume();
+        }
+
+        public static void SetMusicLevel(float value)
+        {
+            if (_instance == null) return;
+            _instance._musicVolume = Mathf.Clamp01(value);
+            PlayerPrefs.SetFloat(MusicVolumeKey, _instance._musicVolume);
+            _instance.ApplyMusicVolume();
+        }
+
+        public static void SetEffectsLevel(float value)
+        {
+            if (_instance == null) return;
+            _instance._effectsVolume = Mathf.Clamp01(value);
+            PlayerPrefs.SetFloat(EffectsVolumeKey, _instance._effectsVolume);
+            _instance.ApplyVolumes();
+        }
+
+        public static void SetMusicMuted(bool muted)
+        {
+            if (_instance == null) return;
+            _instance._musicMuted = muted;
+            PlayerPrefs.SetInt(MusicMutedKey, muted ? 1 : 0);
+            _instance.ApplyMusicVolume();
+        }
+
+        public static void SetEffectsMuted(bool muted)
+        {
+            if (_instance == null) return;
+            _instance._effectsMuted = muted;
+            PlayerPrefs.SetInt(EffectsMutedKey, muted ? 1 : 0);
+            _instance.ApplyVolumes();
+        }
+
+        public static void SaveSettings() => PlayerPrefs.Save();
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused) SaveSettings();
+        }
+
+        private void OnApplicationQuit() => SaveSettings();
+
+        private void ApplyMusicVolume()
+        {
+            float duck = _effectsMuted || _effectsVolume <= 0f ? 1f : _duckGain;
+            _music.volume = _musicMuted ? 0f : _musicGain * duck * _musicVolume;
+        }
+
+        private void ApplyVolumes()
+        {
+            ApplyMusicVolume();
+            for (int i = 0; i < _effects.Length; i++)
+                _effects[i].volume = _effectsMuted ? 0f : _voiceGain[i] * _effectsVolume;
         }
 
         public static void Play(string name, float pitch = 1f, float volume = 1f)
@@ -121,7 +195,8 @@ namespace LiarsBatting.Presentation
             source.Stop();
             source.clip = clip;
             source.pitch = pitch;
-            source.volume = EffectsVolume * Mathf.Clamp01(volume);
+            audio._voiceGain[chosen] = EffectsVolume * Mathf.Clamp01(volume) * EffectBalance(name);
+            source.volume = audio._effectsMuted ? 0f : audio._voiceGain[chosen] * audio._effectsVolume;
             audio._voicePriority[chosen] = priority;
             audio._voiceOrder[chosen] = ++audio._sequence;
             source.Play();
@@ -133,6 +208,34 @@ namespace LiarsBatting.Presentation
                 audio._duckTarget = Mathf.Min(audio._duckTarget, duck);
                 audio._duckUntil = Mathf.Max(audio._duckUntil,
                     Time.unscaledTime + clip.length / Mathf.Max(0.1f, pitch) + 0.5f);
+            }
+        }
+
+        // Attenuate louder clips, based on their measured RMS; leave quieter UI sounds untouched.
+        private static float EffectBalance(string name)
+        {
+            switch (name)
+            {
+                case "SFX_Result_Dim_Drop": return 0.51f;
+                case "SFX_Invite_Notification": return 0.52f;
+                case "SFX_Trust_Accept": return 0.58f;
+                case "SFX_Hero_Paladin_Restore": return 0.59f;
+                case "SFX_Turn_Start_Opponent": return 0.67f;
+                case "SFX_Turn_Start_My": return 0.69f;
+                case "SFX_Timer_Timeout": return 0.72f;
+                case "SFX_Hero_Wizard_Clairvoyance": return 0.73f;
+                case "SFX_Challenge_Doubt":
+                case "SFX_Reveal_Punished": return 0.78f;
+                case "SFX_Hero_Priest_Inquiry":
+                case "SFX_Result_Stamp_Lose": return 0.79f;
+                case "SFX_Judge_Out": return 0.87f;
+                case "SFX_Hero_Rogue_Insight":
+                case "SFX_Result_Stamp_Win": return 0.88f;
+                case "SFX_Hero_Warrior_Rush": return 0.89f;
+                case "SFX_LieToken_Spend": return 0.92f;
+                case "SFX_Reveal_Busted": return 0.97f;
+                case "SFX_Truth_Declare": return 0.98f;
+                default: return 1f;
             }
         }
 
