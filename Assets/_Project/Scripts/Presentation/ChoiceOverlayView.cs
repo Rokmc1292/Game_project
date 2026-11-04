@@ -70,6 +70,11 @@ namespace LiarsBatting.Presentation
 
         public void HideCountdown() => _countdown.gameObject.SetActive(false);
 
+        // Buttons close the overlay themselves, but a timed decision that runs out
+        // resolves without any click -- its timeout fallback must close it explicitly,
+        // or the stale prompt stays on screen (still clickable) after the turn moves on.
+        public void Hide() => _root.SetActive(false);
+
         // Two small buttons in the box's top-right corner: hovering one shows the matching guess history
         // while the player decides (the history buttons on the HUD sit behind this popup's backdrop).
         public void SetHistorySources(HistoryHoverView mine, HistoryHoverView opponent, MonoBehaviour host)

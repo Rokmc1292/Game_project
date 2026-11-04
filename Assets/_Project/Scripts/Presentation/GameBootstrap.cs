@@ -634,8 +634,12 @@ namespace LiarsBatting.Presentation
             SetMyTurnActive(true);
             _timer.Start(GuessSeconds, () =>
             {
+                // e.g. the Priest position/digit picker may still be open.
+                _choiceOverlay.Hide();
                 _attackPicker.SetInteractable(false);
-                OnOnlineGuessSubmitted(RandomDigits(false));
+                var randomGuess = RandomDigits(false);
+                ShowTimeoutNotice($"무작위 숫자 {string.Join(" ", randomGuess)}(으)로 추측합니다",
+                    () => OnOnlineGuessSubmitted(randomGuess));
             });
         }
 
@@ -848,7 +852,9 @@ namespace LiarsBatting.Presentation
             _timer.Start(SecretPickSeconds, () =>
             {
                 _setupPicker.SetInteractable(false);
-                OnSecretChosen(RandomDigits(opponentIsDemonHunter));
+                var randomSecret = RandomDigits(opponentIsDemonHunter);
+                ShowTimeoutNotice($"내 비밀번호가 {string.Join(" ", randomSecret)}(으)로 설정되었습니다",
+                    () => OnSecretChosen(randomSecret));
             });
         }
 
@@ -1250,9 +1256,26 @@ namespace LiarsBatting.Presentation
             }));
         }
 
+        private const float TurnAnnouncementHoldSeconds = 0.55f;
+        private const float TimeoutNoticeHoldSeconds = 1.1f;
+
         private void ShowTurnAnnouncement(string message, Action onComplete)
         {
             GameAudio.Play(message == "나의 턴" ? "SFX_Turn_Start_My" : "SFX_Turn_Start_Opponent");
+            ShowBanner(message, TurnAnnouncementHoldSeconds, onComplete);
+        }
+
+        // Shown when a timed decision runs out, so the player sees what was picked
+        // for them before the game moves on (and before the turn-change banner).
+        // Shares the turn banner's full-screen backdrop, which also blocks clicks
+        // meanwhile, and its cancellation (CancelTurnAnnouncement on game end).
+        private void ShowTimeoutNotice(string whatHappened, Action onComplete)
+        {
+            ShowBanner($"시간 초과!\n<size=24>{whatHappened}</size>", TimeoutNoticeHoldSeconds, onComplete);
+        }
+
+        private void ShowBanner(string message, float holdSeconds, Action onComplete)
+        {
             if (_turnAnnouncementRoot == null)
             {
                 _turnAnnouncementRoot = new GameObject("TurnAnnouncement", typeof(RectTransform), typeof(Image));
@@ -1271,13 +1294,12 @@ namespace LiarsBatting.Presentation
             _turnAnnouncementRoot.SetActive(true);
             _turnAnnouncementRoot.transform.SetAsLastSibling();
             SetTurnAnnouncementAlpha(0f);
-            _turnAnnouncementRoutine = StartCoroutine(TurnAnnouncementRoutine(onComplete));
+            _turnAnnouncementRoutine = StartCoroutine(TurnAnnouncementRoutine(holdSeconds, onComplete));
         }
 
-        private System.Collections.IEnumerator TurnAnnouncementRoutine(Action onComplete)
+        private System.Collections.IEnumerator TurnAnnouncementRoutine(float holdDuration, Action onComplete)
         {
             const float fadeDuration = 0.3f;
-            const float holdDuration = 0.55f;
             float elapsed = 0f;
             while (elapsed < fadeDuration)
             {
@@ -1334,8 +1356,12 @@ namespace LiarsBatting.Presentation
             SetMyTurnActive(true);
             _timer.Start(GuessSeconds, () =>
             {
+                // e.g. the Priest position/digit picker may still be open.
+                _choiceOverlay.Hide();
                 _attackPicker.SetInteractable(false);
-                OnPlayerGuessSubmitted(RandomDigits(false));
+                var randomGuess = RandomDigits(false);
+                ShowTimeoutNotice($"무작위 숫자 {string.Join(" ", randomGuess)}(으)로 추측합니다",
+                    () => OnPlayerGuessSubmitted(randomGuess));
             });
         }
 
@@ -1643,7 +1669,12 @@ namespace LiarsBatting.Presentation
                         () => PromptFakeStrikeChoice(trueResult, (r, u) => Resolve(r, u))));
             }
 
-            _timer.Start(DefendChoiceSeconds, () => Resolve(trueResult, false));
+            // The overlay may be on any of the three steps (truth/lie, strike, ball) here.
+            _timer.Start(DefendChoiceSeconds, () =>
+            {
+                _choiceOverlay.Hide();
+                ShowTimeoutNotice("진실대로 전송합니다", () => Resolve(trueResult, false));
+            });
         }
 
         // Choosing a fake result is two short steps (strike, then ball) instead of
@@ -1774,7 +1805,11 @@ namespace LiarsBatting.Presentation
             }
 
             _choiceOverlay.ShowMixed(message, options.ToArray());
-            _timer.Start(TrustChoiceSeconds, ResolveTrust);
+            _timer.Start(TrustChoiceSeconds, () =>
+            {
+                _choiceOverlay.Hide();
+                ShowTimeoutNotice("'믿는다'로 처리합니다", ResolveTrust);
+            });
         }
 
         private void EndGame(bool playerWon, string message = null)

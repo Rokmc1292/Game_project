@@ -7,9 +7,9 @@ namespace LiarsBatting.Presentation
 {
     // The 0-9 number-card tray used both for picking your secret at setup and for building
     // a guess during your attack turn. Clicking a tray card COPIES its digit into the first
-    // empty slot (the source card just greys out while in use); clicking a filled slot
-    // DELETES it and frees the tray card again -- it can never produce a duplicate digit
-    // because a used tray card can't be clicked.
+    // empty slot (the source card just greys out while in use); clicking a filled slot, or
+    // the greyed-out tray card itself, DELETES it and frees the tray card again -- it can
+    // never produce a duplicate digit because a used tray card only ever takes itself back.
     //
     // Two layouts: the classic stacked one (setup screen) and a split one for the match
     // HUD where the 4 slots sit in the middle of the screen and the tray + submit button sit
@@ -49,7 +49,7 @@ namespace LiarsBatting.Presentation
             UiFactory.SetHeight(slotsRow, slotCard.y);
             UiFactory.SetFlexible(slotsRow, 1, 0);   // otherwise the row soaks up spare height and the slots turn into tall bars
 
-            UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제합니다.", 12, UITheme.Muted, TextAnchor.MiddleCenter);
+            UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯이나 사용 중인 카드를 다시 클릭해 삭제합니다.", 12, UITheme.Muted, TextAnchor.MiddleCenter);
             BuildTray(Root, trayCard, 10f);
 
             var submitRow = UiFactory.HorizontalGroup(Root, "SubmitRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
@@ -74,7 +74,7 @@ namespace LiarsBatting.Presentation
 
             Root = UiFactory.VerticalGroup(trayParent, "TrayColumn", spacing: 8, childAlign: TextAnchor.UpperCenter);
             UiFactory.StretchToFillParent(Root);
-            var hint = UiFactory.Text(Root, "카드를 클릭해 복사, 채워진 슬롯을 클릭해 삭제", 12, UITheme.Muted, TextAnchor.MiddleLeft);
+            var hint = UiFactory.Text(Root, "카드를 클릭해 복사, 다시 클릭해 삭제", 12, UITheme.Muted, TextAnchor.MiddleLeft);
             hint.raycastTarget = false;
             UiFactory.SetHeight(hint, 16);
             BuildTray(Root, trayCard, 8f);
@@ -143,7 +143,18 @@ namespace LiarsBatting.Presentation
 
         private void PlaceDigit(int digit)
         {
-            if (_used[digit]) return;
+            if (_used[digit])
+            {
+                // Clicking a greyed-out (already placed) tray card takes it back, same as
+                // clicking the slot it sits in.
+                int slotIndex = Array.IndexOf(_slotValues, digit);
+                if (slotIndex >= 0)
+                {
+                    GameAudio.Play("SFX_Card_Deselect");
+                    ClearSlot(slotIndex);
+                }
+                return;
+            }
             int emptyIndex = Array.IndexOf(_slotValues, -1);
             if (emptyIndex < 0) return;
 
