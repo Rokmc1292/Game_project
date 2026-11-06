@@ -96,6 +96,7 @@ namespace LiarsBatting.Presentation
         private Coroutine _turnAnnouncementRoutine;
         private Text _tokenText;
         private Button _surrenderButton;
+        private Button _headerSettingsButton;
         private ResultPopupView _resultPopup;
         private Text _menuGreetingText;
         private GameObject _soundSettings;
@@ -161,13 +162,21 @@ namespace LiarsBatting.Presentation
 
             _headerText = UiFactory.Text(row, "라이어스 배팅", 18, UITheme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
             UiFactory.SetFlexible(_headerText, 1, 0);
-            _timer = new CountdownTimerView(row, this);
+            // The countdown number is placed relative to the full-screen root (centred under the
+            // header), not inside the header row.
+            _timer = new CountdownTimerView(root, this);
             _tokenText = UiFactory.Text(row, "", 13, UITheme.Muted, TextAnchor.MiddleRight);
             UiFactory.SetSize(_tokenText, 220, 30);
 
             _surrenderButton = UiFactory.Button(row, "항복", UITheme.Clay, Color.white, OnSurrenderClicked, 13);
             UiFactory.SetSize(_surrenderButton, 70, 30);
             _surrenderButton.gameObject.SetActive(false); // only shown while a match is actually underway
+
+            // The main menu has its own settings button; this one covers hero pick, secret pick
+            // and the match itself, so volume can be changed without leaving the game.
+            _headerSettingsButton = UiFactory.Button(row, "설정", UITheme.Surface2, UITheme.Ink, ShowSoundSettings, 13);
+            UiFactory.SetSize(_headerSettingsButton, 70, 30);
+            _headerSettingsButton.gameObject.SetActive(false);
         }
 
         private GameObject BuildFullScreenContainer(Transform root, string name)
@@ -303,7 +312,9 @@ namespace LiarsBatting.Presentation
             settingsButtonRect.sizeDelta = new Vector2(100f, 40f);
             MenuButtonStyle.Apply(settingsBtn, primary: false);
 
-            BuildSoundSettings(_mainMenuScreen.transform);
+            // Parented to the root (not the main menu) so the same dialog also works from the
+            // header settings button during hero pick, secret pick and the match.
+            BuildSoundSettings(root);
         }
 
         private void BuildSoundSettings(Transform parent)
@@ -436,6 +447,7 @@ namespace LiarsBatting.Presentation
             _musicMute.isOn = GameAudio.MusicMuted;
             _effectsMute.isOn = GameAudio.EffectsMuted;
             _soundSettings.SetActive(true);
+            _soundSettings.transform.SetAsLastSibling(); // above whichever screen is showing
         }
 
         private void CloseSoundSettings()
@@ -1270,6 +1282,8 @@ namespace LiarsBatting.Presentation
             _matchScreen.SetActive(target == _matchScreen);
             _timer.ShowBadge = target != _matchScreen; // the hourglass replaces the header badge in a match
             _surrenderButton.gameObject.SetActive(false); // re-shown once the match actually starts
+            _headerSettingsButton.gameObject.SetActive(
+                target == _heroSelectScreen || target == _setupScreen || target == _matchScreen);
         }
 
         private void OnSurrenderClicked()

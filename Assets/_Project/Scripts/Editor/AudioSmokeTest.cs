@@ -91,7 +91,8 @@ namespace LiarsBatting.Editor
                         if (EditorApplication.timeSinceStartup - _stepStarted < 0.25) break;
                         try
                         {
-                            var dialog = _settingsMenu.transform.Find("SoundSettings");
+                            // The dialog now lives on the root (a sibling of the main menu), so it also works in a match.
+                            var dialog = _settingsMenu.transform.parent.Find("SoundSettings");
                             var musicSlider = dialog.GetComponentsInChildren<Slider>()
                                 .First(slider => slider.name == "MusicSlider");
                             var effectsSlider = dialog.GetComponentsInChildren<Slider>()
@@ -189,7 +190,7 @@ namespace LiarsBatting.Editor
                 var open = menu.GetComponentsInChildren<Button>(true)
                     .First(button => button.name == "SoundSettingsButton");
                 open.onClick.Invoke();
-                var dialog = menu.transform.Find("SoundSettings").gameObject;
+                var dialog = menu.transform.parent.Find("SoundSettings").gameObject;
                 Require(dialog.activeSelf, "Settings button did not open the dialog.");
                 var sliders = dialog.GetComponentsInChildren<Slider>(true);
                 var toggles = dialog.GetComponentsInChildren<Toggle>(true);

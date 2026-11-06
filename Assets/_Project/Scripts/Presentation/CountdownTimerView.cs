@@ -5,16 +5,18 @@ using UnityEngine.UI;
 
 namespace LiarsBatting.Presentation
 {
-    // One shared countdown badge (lives in the header) reused for every timed
-    // decision: hero pick, secret pick, guess submission, defend choice, and
-    // trust/challenge choice. Start() with a fresh deadline and an onExpired
-    // fallback each time; only one timer ever runs, so starting a new one
-    // implicitly cancels whatever the previous decision point was timing.
+    // One shared countdown reused for every timed decision: hero pick, secret pick,
+    // guess submission, defend choice, and trust/challenge choice. Start() with a fresh
+    // deadline and an onExpired fallback each time; only one timer ever runs, so starting
+    // a new one implicitly cancels whatever the previous decision point was timing.
+    //
+    // Outside a match (hero pick, secret pick) the time is shown as a large number
+    // centred just under the header -- numbers only, no gauge. During a match the HUD
+    // hourglass (driven through OnTick) shows it instead and this number stays hidden.
     public class CountdownTimerView
     {
         private readonly GameObject _root;
         private readonly Text _text;
-        private readonly RectTransform _fill;
         private readonly MonoBehaviour _host;
         private Coroutine _routine;
 
@@ -24,25 +26,28 @@ namespace LiarsBatting.Presentation
 
         public bool ShowBadge = true;         // false while the hourglass shows the time instead
 
+        // parent should be the full-screen root: the number is positioned relative to it,
+        // under the 56px header.
         public CountdownTimerView(Transform parent, MonoBehaviour host)
         {
             _host = host;
 
-            var wrap = UiFactory.HorizontalGroup(parent, "Timer", spacing: 8, childAlign: TextAnchor.MiddleRight);
-            UiFactory.SetSize(wrap, 120, 30);
-            _root = wrap.gameObject;
+            _root = new GameObject("TimerNumber", typeof(RectTransform));
+            var rt = (RectTransform)_root.transform;
+            rt.SetParent(parent, false);
+            rt.anchorMin = new Vector2(0.5f, 1f);
+            rt.anchorMax = new Vector2(0.5f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.anchoredPosition = new Vector2(0f, -58f);
+            rt.sizeDelta = new Vector2(240f, 60f);
 
-            var track = UiFactory.Panel(wrap, "TimerTrack", UITheme.Surface2);
-            UiFactory.SetSize(track, 70, 10);
-            _fill = UiFactory.Panel(track, "TimerFill", Brass);
-            _fill.anchorMin = new Vector2(0, 0);
-            _fill.anchorMax = new Vector2(1, 1);
-            _fill.offsetMin = Vector2.zero;
-            _fill.offsetMax = Vector2.zero;
-            _fill.pivot = new Vector2(0, 0.5f);
-
-            _text = UiFactory.Text(wrap, "", 14, UITheme.Ink, TextAnchor.MiddleRight, FontStyle.Bold);
-            UiFactory.SetSize(_text, 26, 30);
+            _text = UiFactory.Text(rt, "", 56, Brass, TextAnchor.MiddleCenter, FontStyle.Bold);
+            _text.supportRichText = true;
+            _text.raycastTarget = false;
+            UiFactory.StretchToFillParent((RectTransform)_text.transform);
+            var shadow = _text.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
+            shadow.effectDistance = new Vector2(2f, -2f);
 
             _root.SetActive(false);
         }
@@ -67,22 +72,22 @@ namespace LiarsBatting.Presentation
         private IEnumerator Run(float seconds, Action onExpired)
         {
             _root.SetActive(ShowBadge);
+            // Drawn above the screen that is currently showing; popups that open later
+            // move themselves to the front again, so they still cover it.
+            _root.transform.SetAsLastSibling();
             float total = seconds;
             float remaining = seconds;
             int lastTick = -1;
             while (remaining > 0f)
             {
                 int displayedSeconds = Mathf.CeilToInt(remaining);
-                _text.text = displayedSeconds.ToString();
+                _text.text = $"{displayedSeconds}<size=26>초</size>";
                 if (displayedSeconds <= 5 && displayedSeconds != lastTick)
                 {
                     lastTick = displayedSeconds;
                     GameAudio.Play("SFX_Timer_Tick_Urgent", 1f + (5 - displayedSeconds) * 0.05f);
                 }
-                _fill.localScale = new Vector3(Mathf.Clamp01(remaining / total), 1f, 1f);
-                bool urgent = remaining <= 3f;
-                _fill.GetComponent<Image>().color = urgent ? UITheme.Clay : Brass;
-                _text.color = urgent ? UITheme.Clay : UITheme.Ink;
+                _text.color = remaining <= 5f ? UITheme.Clay : Brass;
                 OnTick?.Invoke(Mathf.Max(0f, remaining), total);
                 yield return null;
                 remaining -= Time.deltaTime;
