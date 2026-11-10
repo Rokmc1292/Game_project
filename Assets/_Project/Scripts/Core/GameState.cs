@@ -12,8 +12,10 @@ namespace LiarsBatting.Core
         public int[] PlayerSecret;
         public int[] AiSecret;
 
-        public int PlayerLieTokens = 2;
-        public int AiLieTokens = 2;
+        public const int MaxLieTokens = 2;
+
+        public int PlayerLieTokens = MaxLieTokens;
+        public int AiLieTokens = MaxLieTokens;
 
         public HeroId PlayerHero;
         public HeroId AiHero;

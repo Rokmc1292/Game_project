@@ -64,6 +64,12 @@ namespace LiarsBatting.Presentation
         private int[] _myLastOnlineGuess;
 
         private GameObject _nicknameScreen;
+        private Text _nicknameTitle;
+        private Text _nicknameSubtitle;
+        private Text _nicknameStatusText;
+        private InputField _nicknameInput;
+        private Button _nicknameCancelButton;
+        private Button _nicknameConfirmButton;
         private GameObject _mainMenuScreen;
         private GameObject _randomMatchScreen;
         private GameObject _friendMatchScreen;
@@ -191,31 +197,75 @@ namespace LiarsBatting.Presentation
             return go;
         }
 
+        // Same look as the rest of the lobby: the brass-bordered dark plate of the choice /
+        // sound-settings popups, iron-plate buttons, shadowed text. Used both for the very
+        // first nickname and for "닉네임 변경" from the main menu (ShowNicknameScreen
+        // switches the title and shows the cancel button only in that second case).
         private void BuildNicknameScreen(Transform root)
         {
             _nicknameScreen = BuildFullScreenContainer(root, "NicknameScreen");
 
-            var centered = UiFactory.VerticalGroup(_nicknameScreen.transform, "Centered", spacing: 16,
-                padding: new RectOffset(40, 40, 40, 40));
-            centered.anchorMin = new Vector2(0.28f, 0.32f);
-            centered.anchorMax = new Vector2(0.72f, 0.68f);
-            centered.offsetMin = Vector2.zero;
-            centered.offsetMax = Vector2.zero;
+            var panel = UiFactory.Panel(_nicknameScreen.transform, "NicknamePanel", UITheme.Surface2);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.sizeDelta = new Vector2(520f, 350f);
+            panel.anchoredPosition = new Vector2(0f, 10f);
+            MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
 
-            UiFactory.Text(centered, "닉네임을 정해주세요", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.Text(centered, "한 번만 설정하면 다음부터는 바로 메뉴로 갑니다.", 13, UITheme.Muted, TextAnchor.MiddleCenter);
+            var content = UiFactory.VerticalGroup(panel, "Content", spacing: 12,
+                padding: new RectOffset(44, 44, 34, 30), childAlign: TextAnchor.UpperCenter);
+            UiFactory.StretchToFillParent(content);
 
-            var input = UiFactory.InputField(centered, "예: 라이어짱");
-            var statusText = UiFactory.Text(centered, "", 12, UITheme.Clay, TextAnchor.MiddleCenter);
-            statusText.gameObject.SetActive(false);
+            _nicknameTitle = UiFactory.Text(content, "", 24, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(_nicknameTitle, 34);
+            AddTextShadow(_nicknameTitle);
+            _nicknameSubtitle = UiFactory.Text(content, "", 13, UITheme.Muted, TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(_nicknameSubtitle, 22);
+
+            var divider = UiFactory.Panel(content, "Divider", UITheme.Border);
+            UiFactory.SetHeight(divider, 1);
+            divider.GetComponent<Image>().raycastTarget = false;
+
+            var fieldLabel = UiFactory.Text(content, "닉네임 (최대 12자)", 13, new Color32(214, 160, 70, 255),
+                TextAnchor.MiddleLeft, FontStyle.Bold);
+            UiFactory.SetHeight(fieldLabel, 20);
+
+            var input = UiFactory.InputField(content, "예: 라이어짱");
+            _nicknameInput = input;
+            var inputImage = input.GetComponent<Image>();
+            inputImage.color = new Color(0.04f, 0.035f, 0.03f, 0.9f);   // recessed slot inside the plate
+            var inputOutline = input.gameObject.AddComponent<Outline>();
+            inputOutline.effectColor = UITheme.Border;
+            inputOutline.effectDistance = new Vector2(1.5f, -1.5f);
+            UiFactory.SetHeight(input, 50);
+
+            var statusText = UiFactory.Text(content, "", 12, UITheme.Clay, TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(statusText, 20);
+            statusText.text = "";
+            _nicknameStatusText = statusText;
+
+            var buttonRow = UiFactory.HorizontalGroup(content, "Buttons", spacing: 12, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(buttonRow, 52);
+
+            _nicknameCancelButton = UiFactory.Button(buttonRow, "취소", UITheme.Surface2, UITheme.Ink,
+                ShowMainMenu, 15);
+            UiFactory.SetSize(_nicknameCancelButton, 150, 52);
+            MenuButtonStyle.Apply(_nicknameCancelButton, primary: false);
 
             Button confirmBtn = null;
-            confirmBtn = UiFactory.Button(centered, "확인", UITheme.Accent, Color.white, () =>
+            confirmBtn = UiFactory.Button(buttonRow, "확인", UITheme.Accent, Color.white, () =>
             {
                 string name = input.text.Trim();
                 if (name.Length == 0)
                 {
                     ShowNicknameStatus(statusText, "닉네임을 입력해주세요.", isError: true);
+                    return;
+                }
+                if (name == _nickname)
+                {
+                    // Changing to the name you already have: nothing to register.
+                    ShowMainMenu();
                     return;
                 }
 
@@ -238,8 +288,17 @@ namespace LiarsBatting.Presentation
                         confirmBtn.interactable = true;
                         ShowNicknameStatus(statusText, $"서버 연결에 실패했습니다: {error}", isError: true);
                     });
-            }, 15);
-            UiFactory.SetHeight(confirmBtn, 44);
+            }, 16);
+            UiFactory.SetSize(confirmBtn, 220, 52);
+            MenuButtonStyle.Apply(confirmBtn, primary: true);
+            _nicknameConfirmButton = confirmBtn;
+        }
+
+        private static void AddTextShadow(Text text)
+        {
+            var shadow = text.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
+            shadow.effectDistance = new Vector2(1.5f, -2f);
         }
 
         private void RegisterNickname(string name, Button confirmBtn, Text statusText)
@@ -268,7 +327,6 @@ namespace LiarsBatting.Presentation
         {
             statusText.text = message;
             statusText.color = isError ? UITheme.Clay : UITheme.Muted;
-            statusText.gameObject.SetActive(true);
         }
 
         private void BuildMainMenuScreen(Transform root)
@@ -1080,9 +1138,12 @@ namespace LiarsBatting.Presentation
 
         private void UsePaladinHeal()
         {
+            // Healing at full LIE TOKENs would just waste the charge (the button is
+            // disabled then too -- see RefreshMyAbilityUI).
+            if (_state.PlayerLieTokens >= GameState.MaxLieTokens) return;
             GameAudio.Play("SFX_Hero_Paladin_Restore");
             _state.PlayerAbilityCharges--;
-            _state.PlayerLieTokens = Mathf.Min(_state.PlayerLieTokens + 1, 2);
+            _state.PlayerLieTokens = Mathf.Min(_state.PlayerLieTokens + 1, GameState.MaxLieTokens);
             RefreshTokenHeader();
             RefreshMyAbilityUI();
         }
@@ -1155,6 +1216,13 @@ namespace LiarsBatting.Presentation
                     break;
                 case HeroId.Rogue:
                     _myHeroPortrait.SetAbilityButton(label, true, ShowRogueUsageHint);
+                    break;
+                case HeroId.Paladin:
+                    // Nothing to restore while both LIE TOKENs are still there.
+                    if (_state.PlayerLieTokens >= GameState.MaxLieTokens)
+                        _myHeroPortrait.SetAbilityButton("토큰 가득 참", false, null);
+                    else
+                        _myHeroPortrait.SetAbilityButton(label, true, OnMyAbilityClicked);
                     break;
                 default:
                     _myHeroPortrait.SetAbilityButton(label, true, OnMyAbilityClicked);
@@ -1325,6 +1393,17 @@ namespace LiarsBatting.Presentation
             ShowOnly(_nicknameScreen);
             _headerText.text = "라이어스 배팅";
             _tokenText.text = "";
+
+            bool changing = !string.IsNullOrEmpty(_nickname);
+            _nicknameTitle.text = changing ? "닉네임 변경" : "닉네임 설정";
+            _nicknameSubtitle.text = changing
+                ? $"현재 닉네임: {_nickname}"
+                : "한 번만 설정하면 다음부터는 바로 메뉴로 갑니다.";
+            _nicknameCancelButton.gameObject.SetActive(changing);
+            _nicknameConfirmButton.interactable = true;
+            _nicknameStatusText.text = "";
+            _nicknameInput.text = "";
+            _nicknameInput.ActivateInputField();
         }
 
         private void ShowMainMenu()
@@ -1411,6 +1490,8 @@ namespace LiarsBatting.Presentation
             // information the game is designed to hide -- only my own is shown.
             _tokenText.text = "";
             _statusPanel.LieTokens.Set(_state.PlayerLieTokens);
+            // Paladin's heal button depends on the token count (disabled while full).
+            RefreshMyAbilityUI();
         }
 
         // Bumped whenever a match ends. A delayed step scheduled before that (the AI "thinking",
@@ -1593,7 +1674,7 @@ namespace LiarsBatting.Presentation
             if (_ai.ShouldUsePaladinHeal(_state.AiLieTokens, _state.AiAbilityCharges) && _state.AiHero == HeroId.Paladin)
             {
                 _state.AiAbilityCharges--;
-                _state.AiLieTokens = Mathf.Min(_state.AiLieTokens + 1, 2);
+                _state.AiLieTokens = Mathf.Min(_state.AiLieTokens + 1, GameState.MaxLieTokens);
             }
 
             bool aiLied = _ai.ShouldLieAsDefender(trueResult, _state.AiLieTokens, canLieAboutWin);
