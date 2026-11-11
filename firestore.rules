@@ -1,0 +1,89 @@
+rules_version = '2';
+
+// Firestore security rules for Liar's Batting.
+//
+// Apply in the Firebase console: Firestore Database > 규칙(Rules) tab > paste this file > 게시(Publish).
+//
+// The game has no sign-in, so these rules CANNOT tell who is writing. What they do:
+//   - only the five collections the game uses are reachable; everything else is denied
+//   - every document may only contain the fields the game actually writes, with sane types/sizes
+//   - a player's record can only go up by one win or one loss per write, and level never drops
+// What they can't do without sign-in: stop someone with the (public) API key from editing or
+// deleting another player's document. That needs Firebase Authentication (see README 6-3).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- players/{nickname}: profile, record, progress ----------
+    function isPlayerShape(d, name) {
+      return d.keys().hasOnly(['nickname', 'lastSeen', 'profileIcon', 'wins', 'losses', 'level', 'title', 'progress'])
+        && d.get('nickname', name) == name
+        && name.size() <= 20
+        && d.get('lastSeen', 0) is int
+        && d.get('profileIcon', '') is string && d.get('profileIcon', '').size() <= 20
+        && d.get('wins', 0) is int && d.get('wins', 0) >= 0
+        && d.get('losses', 0) is int && d.get('losses', 0) >= 0
+        && d.get('level', 1) is int && d.get('level', 1) >= 1 && d.get('level', 1) <= 30
+        && d.get('title', '') is string && d.get('title', '').size() <= 30
+        && d.get('progress', '') is string && d.get('progress', '').size() <= 20000;
+    }
+
+    match /players/{name} {
+      allow read: if true;
+      // Registration and renaming create the document (create-only, so names stay unique).
+      allow create: if isPlayerShape(request.resource.data, name);
+      // Settling a match adds at most one win or loss; the level never goes down.
+      allow update: if isPlayerShape(request.resource.data, name)
+        && request.resource.data.get('wins', 0) >= resource.data.get('wins', 0)
+        && request.resource.data.get('wins', 0) <= resource.data.get('wins', 0) + 1
+        && request.resource.data.get('losses', 0) >= resource.data.get('losses', 0)
+        && request.resource.data.get('losses', 0) <= resource.data.get('losses', 0) + 1
+        && request.resource.data.get('level', 1) >= resource.data.get('level', 1);
+      // Renaming deletes the old document. Without sign-in this can't be limited to its owner.
+      allow delete: if true;
+    }
+
+    // ---------- matches/{matchId}: one online match ----------
+    match /matches/{matchId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly([
+          'playerA', 'playerB', 'status', 'heroA', 'heroB', 'winner', 'reason', 'surrendered',
+          'secretASet', 'secretBSet', 'turnAttacker', 'warriorKeepTurn', 'action', 'seq',
+          'guessDigits', 'reportedStrike', 'reportedBall', 'revealTarget',
+          'revealedBy', 'revealedIndex', 'revealedDigit', 'rogueWasLie',
+          'priestPosition', 'priestGuessDigit', 'priestAnswerBool',
+          'wizardUserSide', 'wizardUserIndex', 'wizardUserDigit',
+          'wizardResponderSide', 'wizardResponderIndex', 'wizardResponderDigit'])
+        && request.resource.data.get('playerA', '') is string && request.resource.data.get('playerA', '').size() <= 20
+        && request.resource.data.get('playerB', '') is string && request.resource.data.get('playerB', '').size() <= 20;
+      allow delete: if false;   // the game never deletes matches
+    }
+
+    // ---------- matchPresence/{matchId}_{A|B}: "still connected" heartbeat ----------
+    match /matchPresence/{id} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['beat'])
+        && request.resource.data.beat is int;
+      allow delete: if true;
+    }
+
+    // ---------- matchQueue/{nickname}: random-match waiting list ----------
+    match /matchQueue/{name} {
+      allow read: if true;   // includes listing the queue
+      allow create, update: if request.resource.data.keys().hasOnly(['nickname', 'joinedAt', 'matchId'])
+        && request.resource.data.get('matchId', '') is string
+        && request.resource.data.get('matchId', '').size() <= 64;
+      allow delete: if true;
+    }
+
+    // ---------- invites/{recipient}: friend-match invitation ----------
+    match /invites/{name} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['fromNickname', 'matchId', 'status', 'sentAt'])
+        && request.resource.data.get('status', '') in
+           ['pending', 'accepted', 'declined_by_recipient', 'cancelled', 'declined'];
+      allow delete: if true;
+    }
+
+    // Anything else: denied (no matching rule).
+  }
+}

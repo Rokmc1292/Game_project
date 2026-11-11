@@ -204,6 +204,7 @@ namespace LiarsBatting.Presentation
             }, 15);
             UiFactory.SetSize(_renameButton, 110, 48);
             MenuButtonStyle.Apply(_renameButton, primary: false);
+            UiFactory.SubmitOnEnter(_renameInput, _renameButton);
 
             _statusText = UiFactory.Text(right, "", 13, UITheme.Muted, TextAnchor.MiddleLeft);
             UiFactory.SetHeight(_statusText, 20);

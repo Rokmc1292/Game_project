@@ -322,6 +322,7 @@ namespace LiarsBatting.Presentation
             UiFactory.SetSize(confirmBtn, 220, 52);
             MenuButtonStyle.Apply(confirmBtn, primary: true);
             _nicknameConfirmButton = confirmBtn;
+            UiFactory.SubmitOnEnter(input, confirmBtn);
         }
 
         private static void AddTextShadow(Text text)
@@ -756,6 +757,7 @@ namespace LiarsBatting.Presentation
             }, 16);
             UiFactory.SetSize(_friendInviteButton, 220, 50);
             MenuButtonStyle.Apply(_friendInviteButton, primary: true);
+            UiFactory.SubmitOnEnter(_friendTargetInput, _friendInviteButton);
         }
 
         private void ShowFriendStatus(string message, bool isError)
@@ -1314,7 +1316,14 @@ namespace LiarsBatting.Presentation
                 PortraitLook.Apply(pair.Value, pair.Key, progress);
             _headerText.text = _isOnlineMatch ? $"영웅 선택 — 상대: {_network.OpponentNickname}" : "영웅을 선택하세요";
             _tokenText.text = "";
-            _timer.Start(HeroPickSeconds, () => OnHeroChosen(RandomHeroId()));
+            _timer.Start(HeroPickSeconds, () =>
+            {
+                // Same as the other timeouts: say what was picked before moving on.
+                SetHeroButtonsInteractable(false);
+                var hero = RandomHeroId();
+                ShowTimeoutNotice($"무작위로 '{HeroCatalog.Get(hero).Name}' 영웅이 선택되었습니다",
+                    () => OnHeroChosen(hero));
+            });
         }
 
         private void OnHeroChosen(HeroId hero)

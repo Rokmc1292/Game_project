@@ -228,6 +228,27 @@ namespace LiarsBatting.Presentation
             return panel;
         }
 
+        // Pressing Enter in the field clicks `button` (if it's clickable). InputField's onEndEdit
+        // also fires when the field just loses focus, so the key itself is checked.
+        public static void SubmitOnEnter(InputField field, Button button)
+        {
+            field.onEndEdit.AddListener(_ =>
+            {
+                if (EnterPressedThisFrame() && button != null && button.interactable && button.gameObject.activeInHierarchy)
+                    button.onClick.Invoke();
+            });
+        }
+
+        private static bool EnterPressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var keyboard = UnityEngine.InputSystem.Keyboard.current;
+            return keyboard != null && (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame);
+#else
+            return Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+#endif
+        }
+
         public static InputField InputField(Transform parent, string placeholder, int characterLimit = 12)
         {
             var go = new GameObject("InputField", typeof(RectTransform), typeof(Image), typeof(InputField));
