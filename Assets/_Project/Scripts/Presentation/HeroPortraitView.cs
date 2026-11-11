@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.UI;
 using LiarsBatting.Core;
+using LiarsBatting.Progression;
 
 namespace LiarsBatting.Presentation
 {
@@ -111,6 +112,10 @@ namespace LiarsBatting.Presentation
             _abilityButton.interactable = interactable;
             _onAbilityClick = onClick;
         }
+
+        // The equipped mastery skin / moving effect for this hero (progress = the player's own,
+        // or the online opponent's; null = the plain portrait). Call after SetHero.
+        public void SetLook(HeroId hero, PlayerProgress progress) => PortraitLook.Apply(_portraitImage, hero, progress);
 
         // null = no frame.
         public void SetFrame(Color? color)

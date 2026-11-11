@@ -120,11 +120,11 @@ namespace LiarsBatting.Network
             WithCurrent(nickname, profile =>
             {
                 if (!profile.Progress.IsUnlocked(reward)) { onError?.Invoke("아직 잠겨 있습니다."); return; }
-                string previous = profile.Progress.EquippedId(reward.Kind);
+                var previous = profile.Progress.EquippedInSameSlot(reward);
                 profile.Progress.Equip(reward);
                 _db.PatchFields(PathOf(nickname), ProgressFields(profile), ProgressFieldPaths, onSaved, error =>
                 {
-                    profile.Progress.Equip(RewardCatalog.Find(previous) ?? reward);   // undo locally
+                    if (previous != null) profile.Progress.Equip(previous);   // undo locally
                     onError?.Invoke(error);
                 });
             }, onError);

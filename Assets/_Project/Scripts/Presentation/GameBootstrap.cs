@@ -85,6 +85,9 @@ namespace LiarsBatting.Presentation
         private Button _friendInviteButton;
 
         private readonly List<Button> _heroSelectButtons = new List<Button>();
+        private readonly Dictionary<HeroId, Text> _heroSelectLevels = new Dictionary<HeroId, Text>();
+        private readonly Dictionary<HeroId, Image> _heroSelectPortraits = new Dictionary<HeroId, Image>();
+        private PlayerProgress _opponentProgress;       // online opponent's progress (their portrait skin/effect)
 
         private CardPickerView _setupPicker;
         private CardPickerView _attackPicker;
@@ -119,6 +122,7 @@ namespace LiarsBatting.Presentation
         private string _opponentTitle = "";             // online opponent's equipped title, shown under their portrait
         private MatchStats _stats = new MatchStats();   // what I did this match, for XP and challenges
         private bool _lastDefenseWasLie;                // my most recent report used a LIE TOKEN
+        private bool _nextOnlineTurnExtra;              // online: my next attack turn is a kept (Warrior) turn
         private GameObject _soundSettings;
         private Slider _musicSlider;
         private Slider _effectsSlider;
@@ -739,10 +743,13 @@ namespace LiarsBatting.Presentation
 
                 // The opponent's equipped title, shown under their portrait once the match screen is up.
                 _opponentTitle = "";
+                _opponentProgress = null;
                 _profiles.Fetch(opponentNickname, other =>
                 {
                     _opponentTitle = RewardCatalog.TitleText(other.Progress.Title);
+                    _opponentProgress = other.Progress;
                     _opponentHeroPortrait.SetSubtitle(_opponentTitle);
+                    if (_matchScreen.activeSelf) _opponentHeroPortrait.SetLook(_state.AiHero, _opponentProgress);
                 }, error => Debug.LogWarning($"상대 프로필 불러오기 실패: {error}"));
 
                 _network = new NetworkMatchController(_firestore, this, matchId, mySide, _nickname, opponentNickname);
@@ -756,6 +763,7 @@ namespace LiarsBatting.Presentation
                 _pendingNoticeDigit = -1;
                 _state = new GameState();
                 _stats = new MatchStats();
+                _nextOnlineTurnExtra = false;
 
                 GameAudio.Play("SFX_Match_Found");
                 ShowHeroSelectScreen();
@@ -901,7 +909,7 @@ namespace LiarsBatting.Presentation
             _network.OnOpponentTrusted += () =>
             {
                 if (_matchOver) return;
-                if (_lastDefenseWasLie) _stats.LiesBelieved++;
+                if (_lastDefenseWasLie) _stats.LieBelieved();
                 GameAudio.Play("SFX_Trust_Accept");
                 QueueNotice("<size=48>상대가 당신의 대답을 믿었습니다</size>", NoticeHoldSeconds);
             };
@@ -920,6 +928,11 @@ namespace LiarsBatting.Presentation
             _network.OnGameOver += (winner, reason) =>
             {
                 bool won = winner == _network.MySide;
+                if (won && reason == NetworkMatchController.GameOverByGuess && !_matchOver)
+                {
+                    _stats.WonByGuess = true;
+                    _stats.WonOnExtraTurn = _stats.OnExtraTurn;
+                }
                 string message = reason == NetworkMatchController.GameOverByFullReveal
                     ? (won ? "상대의 비밀번호가 모두 공개되었다" : "내 비밀번호가 모두 공개되었다")
                     : null;
@@ -954,6 +967,7 @@ namespace LiarsBatting.Presentation
 
             _network.OnPriestAnswer += answer =>
             {
+                if (answer) _stats.PriestYes++;
                 string text = answer ? "맞습니다" : "아닙니다";
                 _choiceOverlay.Show($"상대의 답변: \"{text}\"", ("확인", () => { }));
             };
@@ -1005,6 +1019,8 @@ namespace LiarsBatting.Presentation
 
         private void BeginOnlineAttackTurnAfterAnnouncement()
         {
+            _stats.OnExtraTurn = _nextOnlineTurnExtra;
+            _nextOnlineTurnExtra = false;
             RefreshTokenHeader();
             _headerText.text = $"내 턴 — {_network.OpponentNickname}님의 비밀번호를 추리하세요";
             _attackPicker.SetInteractable(true);
@@ -1048,6 +1064,7 @@ namespace LiarsBatting.Presentation
             _attackPicker.SetInteractable(false);
             _headerText.text = $"{_network.OpponentNickname}님의 응답을 기다리는 중...";
             bool keepTurn = _state.PlayerExtraTurnPending;
+            _nextOnlineTurnExtra = keepTurn;   // my next attack turn is a kept (Warrior) turn
             _state.PlayerExtraTurnPending = false;
             _network.SubmitGuess(guess, keepTurn);
             _timer.StartSpectating(DefendChoiceSeconds);   // the opponent's truth-or-lie clock
@@ -1137,6 +1154,18 @@ namespace LiarsBatting.Presentation
                 portraitImg.sprite = Resources.Load<Sprite>($"Heroes/Hero_{heroId}_Portrait");
                 portraitImg.preserveAspect = true;
                 portraitImg.raycastTarget = false;
+                _heroSelectPortraits[heroId] = portraitImg;
+
+                // My mastery level with this hero, top-right of the card (filled in ShowHeroSelectScreen).
+                var levelText = UiFactory.Text(cardGo.transform, "", 13, brass, TextAnchor.UpperRight, FontStyle.Bold);
+                levelText.raycastTarget = false;
+                var levelRt = (RectTransform)levelText.transform;
+                levelRt.anchorMin = new Vector2(1, 1);
+                levelRt.anchorMax = new Vector2(1, 1);
+                levelRt.pivot = new Vector2(1, 1);
+                levelRt.anchoredPosition = new Vector2(-12, -8);
+                levelRt.sizeDelta = new Vector2(80, 20);
+                _heroSelectLevels[heroId] = levelText;
 
                 var nameText = UiFactory.Text(inner, info.Name, 17, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
                 nameText.raycastTarget = false;
@@ -1158,6 +1187,11 @@ namespace LiarsBatting.Presentation
         {
             ShowOnly(_heroSelectScreen);
             SetHeroButtonsInteractable(true);
+            var progress = _profiles.Current?.Progress;
+            foreach (var pair in _heroSelectLevels)
+                pair.Value.text = progress != null ? $"Lv.{progress.HeroLevel(pair.Key)}" : "";
+            foreach (var pair in _heroSelectPortraits)
+                PortraitLook.Apply(pair.Value, pair.Key, progress);
             _headerText.text = _isOnlineMatch ? $"영웅 선택 — 상대: {_network.OpponentNickname}" : "영웅을 선택하세요";
             _tokenText.text = "";
             _timer.Start(HeroPickSeconds, () => OnHeroChosen(RandomHeroId()));
@@ -1323,6 +1357,7 @@ namespace LiarsBatting.Presentation
             if (_state.PlayerLieTokens >= GameState.MaxLieTokens) return;
             GameAudio.Play("SFX_Hero_Paladin_Restore");
             _stats.AbilityUses++;
+            _stats.PaladinHealed = true;
             _state.PlayerAbilityCharges--;
             _state.PlayerLieTokens = Mathf.Min(_state.PlayerLieTokens + 1, GameState.MaxLieTokens);
             RefreshTokenHeader();
@@ -1349,6 +1384,7 @@ namespace LiarsBatting.Presentation
             if (HiddenCount(_state.PlayerRevealed) <= 1) return;
             GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
             _stats.AbilityUses++;
+            _stats.GuessesAtWizard = _stats.Guesses;
             _state.PlayerAbilityCharges--;
             int myIdx = PickRandomOpenIndex(_state.PlayerRevealed);
             if (myIdx >= 0)
@@ -1496,6 +1532,7 @@ namespace LiarsBatting.Presentation
             else
             {
                 bool answer = _state.AiSecret[position] == guessedDigit;
+                if (answer) _stats.PriestYes++;
                 string answerText = answer ? "맞습니다" : "아닙니다";
                 _choiceOverlay.Show($"상대의 답변: {position + 1}번째 자리가 {guessedDigit}인지에 대해 \"{answerText}\"",
                     ("확인", EndMyAttackTurnAndPassToOpponent));
@@ -1755,6 +1792,8 @@ namespace LiarsBatting.Presentation
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
             _opponentHeroPortrait.SetSubtitle("AI");
+            _myHeroPortrait.SetLook(_state.PlayerHero, _profiles.Current?.Progress);
+            _opponentHeroPortrait.SetLook(_state.AiHero, null);
             _myTurnActive = false;
             RefreshMyAbilityUI();
             _statusPanel.ShowMySecret(playerSecret);
@@ -1780,6 +1819,8 @@ namespace LiarsBatting.Presentation
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
             _opponentHeroPortrait.SetSubtitle(_opponentTitle);
+            _myHeroPortrait.SetLook(_state.PlayerHero, _profiles.Current?.Progress);
+            _opponentHeroPortrait.SetLook(_state.AiHero, _opponentProgress);
             _myTurnActive = false;
             RefreshMyAbilityUI();
             _statusPanel.ShowMySecret(playerSecret);
@@ -1979,6 +2020,7 @@ namespace LiarsBatting.Presentation
             GameAudio.Music("BGM_Match_Tension");
             if (announce)
             {
+                _stats.OnExtraTurn = false;   // an announced turn is a normal one
                 _timer.Stop();
                 _attackPicker.SetInteractable(false);
                 ShowTurnAnnouncement("나의 턴", () => BeginPlayerAttackTurn(false));
@@ -2008,6 +2050,7 @@ namespace LiarsBatting.Presentation
             if (_state.PlayerExtraTurnPending)
             {
                 _state.PlayerExtraTurnPending = false;
+                _stats.OnExtraTurn = true;   // this next attack is the Warrior's kept turn
                 BeginPlayerAttackTurn(false);
             }
             else
@@ -2099,6 +2142,8 @@ namespace LiarsBatting.Presentation
 
             if (_state.Result == GameResult.PlayerWin)
             {
+                _stats.WonByGuess = true;
+                _stats.WonOnExtraTurn = _stats.OnExtraTurn;
                 EndGame(true);
                 return;
             }
@@ -2209,7 +2254,7 @@ namespace LiarsBatting.Presentation
 
                 if (!challenge)
                 {
-                    if (playerLied) _stats.LiesBelieved++;
+                    if (playerLied) _stats.LieBelieved();
                     _ai.NarrowByOwnGuess(guess, reported);
                     // Say what the opponent decided -- the turn used to just move on without a word.
                     GameAudio.Play("SFX_Trust_Accept");
@@ -2333,6 +2378,7 @@ namespace LiarsBatting.Presentation
             {
                 _lastDefenseWasLie = usedToken;
                 if (usedToken) _stats.LiesTold++;
+                if (usedToken && trueResult.IsWin) _stats.HidTrueWin = true;   // Hunter: hid a real 4-strike
                 _timer.Stop();
                 GameAudio.Play(usedToken ? "SFX_LieToken_Spend" : "SFX_Truth_Declare");
                 onChoice(result, usedToken);
@@ -2477,6 +2523,7 @@ namespace LiarsBatting.Presentation
 
             void ShowRogueResult(bool wasLie)
             {
+                if (wasLie) _stats.RogueCatches++;
                 // The truth check is certain, so the log can record the verdict right away.
                 if (wasLie) _statusPanel.MyAttackHistory.MarkLastRowAsLie();
                 else _statusPanel.MyAttackHistory.MarkLastRowAsTruth();

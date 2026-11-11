@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using LiarsBatting.Core;
 
 namespace LiarsBatting.Progression
 {
@@ -11,13 +12,27 @@ namespace LiarsBatting.Progression
         public int LevelBefore;
         public int LevelAfter;
         public readonly List<string> Completed = new List<string>();
+
+        public HeroId Hero;
+        public int HeroXpGained;
+        public int HeroLevelBefore;
+        public int HeroLevelAfter;
+        public readonly List<string> HeroCompleted = new List<string>();
+
         public readonly List<RewardInfo> NewRewards = new List<RewardInfo>();
 
         public string ToSummary()
         {
             var sb = new StringBuilder($"+{XpGained} XP");
             if (LevelAfter > LevelBefore) sb.Append($"  ·  레벨 업! Lv.{LevelAfter}");
-            if (Completed.Count > 0) sb.Append("\n완료: ").Append(string.Join(", ", Completed));
+
+            string heroName = HeroCatalog.Get(Hero)?.Name ?? Hero.ToString();
+            sb.Append($"\n{heroName} 숙련도 +{HeroXpGained} XP");
+            if (HeroLevelAfter > HeroLevelBefore) sb.Append($"  ·  숙련도 Lv.{HeroLevelAfter}!");
+
+            var completed = new List<string>(Completed);
+            completed.AddRange(HeroCompleted);
+            if (completed.Count > 0) sb.Append("\n완료: ").Append(string.Join(", ", completed));
             if (NewRewards.Count > 0)
             {
                 var names = new List<string>();
@@ -57,6 +72,8 @@ namespace LiarsBatting.Progression
         {
             RollPeriods(p, utcNow);
             var result = new MatchSettlement { LevelBefore = p.Level };
+
+            // ---- player level ----
             int xp = LevelTable.MatchXp(s.Online, s.Won);
 
             foreach (var def in ChallengeCatalog.DailyFor(p.DailyPeriod))
@@ -68,8 +85,8 @@ namespace LiarsBatting.Progression
 
             if (s.Won)
             {
-                string hero = s.Hero.ToString();
-                if (!p.WeeklyWinHeroes.Contains(hero)) p.WeeklyWinHeroes.Add(hero);
+                string heroKey = s.Hero.ToString();
+                if (!p.WeeklyWinHeroes.Contains(heroKey)) p.WeeklyWinHeroes.Add(heroKey);
             }
             foreach (var def in ChallengeCatalog.WeeklyFor(p.WeeklyPeriod))
             {
@@ -94,6 +111,23 @@ namespace LiarsBatting.Progression
             result.XpGained = xp;
             result.LevelAfter = p.Level;
             result.NewRewards.AddRange(RewardCatalog.UnlockedBetween(result.LevelBefore, result.LevelAfter));
+
+            // ---- hero mastery (the hero I played) ----
+            var hero = p.Hero(s.Hero);
+            result.Hero = s.Hero;
+            result.HeroLevelBefore = hero.Level;
+            int heroXp = LevelTable.HeroMatchXp(s.Online, s.Won);
+            foreach (var def in HeroChallengeCatalog.For(s.Hero))
+                if (Advance(hero.Challenges, hero.Done, def, def.Progress(s)))
+                {
+                    heroXp += LevelTable.HeroChallengeXp;
+                    result.HeroCompleted.Add(def.Text);
+                }
+            AddHeroXp(hero, heroXp);
+            result.HeroXpGained = heroXp;
+            result.HeroLevelAfter = hero.Level;
+            result.NewRewards.AddRange(RewardCatalog.HeroUnlockedBetween(s.Hero, result.HeroLevelBefore, result.HeroLevelAfter));
+
             return result;
         }
 
@@ -118,6 +152,17 @@ namespace LiarsBatting.Progression
                 p.Level++;
             }
             if (p.Level >= LevelTable.MaxPlayerLevel) p.Xp = 0;
+        }
+
+        public static void AddHeroXp(HeroProgress h, int amount)
+        {
+            h.Xp += amount;
+            while (h.Level < LevelTable.MaxHeroLevel && h.Xp >= LevelTable.HeroXpToNext(h.Level))
+            {
+                h.Xp -= LevelTable.HeroXpToNext(h.Level);
+                h.Level++;
+            }
+            if (h.Level >= LevelTable.MaxHeroLevel) h.Xp = 0;
         }
     }
 }
