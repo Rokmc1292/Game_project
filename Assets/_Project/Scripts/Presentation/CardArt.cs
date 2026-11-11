@@ -4,6 +4,10 @@ using UnityEngine;
 /// uGUI(Image.sprite)와 UI Toolkit(style.backgroundImage) 모두에서 쓸 수 있습니다.
 public static class CardArt
 {
+    // The equipped card skin's tint (placeholder until real card-skin art exists). Every view that
+    // shows a number card multiplies its card image by this.
+    public static Color Tint = Color.white;
+
     public static Sprite Digit(int n)
     {
         if (n < 0 || n > 9) { Debug.LogWarning($"CardArt: 0~9 범위가 아닙니다 ({n})"); return null; }

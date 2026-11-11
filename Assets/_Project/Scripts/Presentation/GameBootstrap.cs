@@ -5,6 +5,7 @@ using UnityEngine.UI;
 using LiarsBatting.Core;
 using LiarsBatting.AI;
 using LiarsBatting.Network;
+using LiarsBatting.Progression;
 using Newtonsoft.Json.Linq;
 
 namespace LiarsBatting.Presentation
@@ -114,6 +115,10 @@ namespace LiarsBatting.Presentation
         private Image _menuProfileIcon;
         private ProfileStore _profiles;
         private ProfileScreen _profileScreen;
+        private Image _rootBackground;                  // the table background (tinted by the equipped background skin)
+        private string _opponentTitle = "";             // online opponent's equipped title, shown under their portrait
+        private MatchStats _stats = new MatchStats();   // what I did this match, for XP and challenges
+        private bool _lastDefenseWasLie;                // my most recent report used a LIE TOKEN
         private GameObject _soundSettings;
         private Slider _musicSlider;
         private Slider _effectsSlider;
@@ -131,6 +136,7 @@ namespace LiarsBatting.Presentation
             var rootImage = root.GetComponent<Image>();
             rootImage.sprite = CardArt.Background();   // underground table background
             rootImage.raycastTarget = false;
+            _rootBackground = rootImage;
             _firestore = new FirestoreClient(this);
             _profiles = new ProfileStore(_firestore);
 
@@ -371,6 +377,7 @@ namespace LiarsBatting.Presentation
             // Greeting row: my profile picture next to "닉네임님, 환영합니다".
             var greetingRow = UiFactory.HorizontalGroup(centered, "Greeting", spacing: 10, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(greetingRow, 48);
+            UiFactory.SetFlexible(greetingRow, 1, 0);   // a horizontal group would otherwise soak up spare height
             var iconGo = new GameObject("ProfileIcon", typeof(RectTransform), typeof(Image));
             iconGo.transform.SetParent(greetingRow, false);
             UiFactory.SetSize(iconGo.transform, 40, 48);
@@ -730,6 +737,14 @@ namespace LiarsBatting.Presentation
                 string playerA = FirestoreClient.ReadString(doc, "playerA");
                 var mySide = playerA == _nickname ? MatchSide.A : MatchSide.B;
 
+                // The opponent's equipped title, shown under their portrait once the match screen is up.
+                _opponentTitle = "";
+                _profiles.Fetch(opponentNickname, other =>
+                {
+                    _opponentTitle = RewardCatalog.TitleText(other.Progress.Title);
+                    _opponentHeroPortrait.SetSubtitle(_opponentTitle);
+                }, error => Debug.LogWarning($"상대 프로필 불러오기 실패: {error}"));
+
                 _network = new NetworkMatchController(_firestore, this, matchId, mySide, _nickname, opponentNickname);
                 WireNetworkEvents();
                 _network.Start();
@@ -740,6 +755,7 @@ namespace LiarsBatting.Presentation
                 _pendingNotice = null;
                 _pendingNoticeDigit = -1;
                 _state = new GameState();
+                _stats = new MatchStats();
 
                 GameAudio.Play("SFX_Match_Found");
                 ShowHeroSelectScreen();
@@ -801,6 +817,7 @@ namespace LiarsBatting.Presentation
                     },
                     onChallenge: () =>
                     {
+                        _stats.Challenges++;
                         _awaitingMyChallengeOutcome = true;
                         _network.SubmitChallenge();
                         _headerText.text = $"{_network.OpponentNickname}님의 응답을 기다리는 중...";
@@ -826,6 +843,7 @@ namespace LiarsBatting.Presentation
                 {
                     // I challenged but the opponent told the truth -- I'm the one who has to open a digit.
                     _awaitingMyChallengeOutcome = false;
+                    _stats.ChallengesWrong++;
                     _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
                     GameAudio.Play("SFX_Reveal_Punished");
                     message = "헛다리! 상대는 진실을 말했습니다.\n벌칙으로 내 비밀번호 한 자리를 공개하세요.";
@@ -833,6 +851,7 @@ namespace LiarsBatting.Presentation
                 else
                 {
                     // The opponent challenged and I had lied: caught.
+                    _stats.LiesCaught++;
                     message = "상대가 당신의 거짓말을 눈치챘습니다!\n벌칙으로 내 비밀번호 한 자리를 공개하세요.";
                 }
                 PromptPlayerRevealChoice(message, index =>
@@ -860,6 +879,7 @@ namespace LiarsBatting.Presentation
                 _awaitingMyChallengeOutcome = false;
                 if (iChallenged)
                 {
+                    _stats.ChallengesCorrect++;
                     // I challenged and the opponent now has to open a digit: their answer was a lie.
                     _statusPanel.MyAttackHistory.MarkLastRowAsLie();
                     GameAudio.Play("SFX_Reveal_Busted");
@@ -881,6 +901,7 @@ namespace LiarsBatting.Presentation
             _network.OnOpponentTrusted += () =>
             {
                 if (_matchOver) return;
+                if (_lastDefenseWasLie) _stats.LiesBelieved++;
                 GameAudio.Play("SFX_Trust_Accept");
                 QueueNotice("<size=48>상대가 당신의 대답을 믿었습니다</size>", NoticeHoldSeconds);
             };
@@ -1036,7 +1057,6 @@ namespace LiarsBatting.Presentation
         {
             if (_matchOver) return;   // the loser's own write, the winner's poll and a local check can all report it
             _matchOver = true;
-            _profiles.RecordHumanMatch(_nickname, won);   // record against people (AI matches never count)
             _timer.Stop();
             _network?.Stop();
             _matchSession++;
@@ -1049,6 +1069,25 @@ namespace LiarsBatting.Presentation
             _resultPopup.Show(won,
                 message ?? (won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
                 cards);
+            SettleMatch(won);
+        }
+
+        // XP, level, challenges and (online) the record against people -- once per match, after the
+        // result popup is up so its summary line can be filled in when the numbers are ready.
+        private void SettleMatch(bool won)
+        {
+            var stats = _stats;
+            stats.Hero = _state.PlayerHero;
+            stats.Online = _isOnlineMatch;
+            stats.Won = won;
+            stats.MyDigitsRevealed = 4 - HiddenCount(_state.PlayerRevealed);
+            stats.OpponentDigitsRevealed = 4 - HiddenCount(_state.AiRevealed);
+            _resultPopup.SetSummary("경험치 계산 중...");
+            _profiles.SettleMatch(_nickname, stats, settlement =>
+            {
+                _resultPopup.SetSummary(settlement.ToSummary());
+                ApplyCosmetics(_profiles.Current);   // a new level may have changed nothing equipped, but keep it in sync
+            });
         }
 
         // ---------- hero select ----------
@@ -1283,6 +1322,7 @@ namespace LiarsBatting.Presentation
             // disabled then too -- see RefreshMyAbilityUI).
             if (_state.PlayerLieTokens >= GameState.MaxLieTokens) return;
             GameAudio.Play("SFX_Hero_Paladin_Restore");
+            _stats.AbilityUses++;
             _state.PlayerAbilityCharges--;
             _state.PlayerLieTokens = Mathf.Min(_state.PlayerLieTokens + 1, GameState.MaxLieTokens);
             RefreshTokenHeader();
@@ -1296,6 +1336,7 @@ namespace LiarsBatting.Presentation
         private void UseWarriorAbility()
         {
             GameAudio.Play("SFX_Hero_Warrior_Rush");
+            _stats.AbilityUses++;
             _state.PlayerAbilityCharges--;
             _state.PlayerExtraTurnPending = true;
             RefreshMyAbilityUI();
@@ -1307,6 +1348,7 @@ namespace LiarsBatting.Presentation
             // knows my whole secret), so this is blocked -- the button is disabled in that state as well.
             if (HiddenCount(_state.PlayerRevealed) <= 1) return;
             GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
+            _stats.AbilityUses++;
             _state.PlayerAbilityCharges--;
             int myIdx = PickRandomOpenIndex(_state.PlayerRevealed);
             if (myIdx >= 0)
@@ -1438,6 +1480,7 @@ namespace LiarsBatting.Presentation
         private void OnPriestQuerySubmitted(int position, int guessedDigit)
         {
             GameAudio.Play("SFX_Hero_Priest_Inquiry");
+            _stats.AbilityUses++;
             _timer.Stop();
             _state.PlayerAbilityCharges--;
             RefreshMyAbilityUI();
@@ -1579,8 +1622,38 @@ namespace LiarsBatting.Presentation
             {
                 OnBack = ShowMainMenu,
                 OnIconPicked = OnProfileIconPicked,
-                OnRenameRequested = OnProfileRenameRequested
+                OnRenameRequested = OnProfileRenameRequested,
+                OnEquipRequested = OnCosmeticEquipRequested
             };
+        }
+
+        // Puts the equipped cosmetics on screen (placeholder looks: tints and an outline frame).
+        private void ApplyCosmetics(PlayerProfile profile)
+        {
+            if (profile == null) return;
+            var p = profile.Progress;
+            _rootBackground.color = ProfileScreen.TintOf(RewardCatalog.Find(p.Background), Color.white);
+            CardArt.Tint = ProfileScreen.TintOf(RewardCatalog.Find(p.CardSkin), Color.white);
+            _setupPicker.RefreshTint();
+            _attackPicker.RefreshTint();
+            _myHeroPortrait.SetFrame(p.Frame == RewardCatalog.NoFrame
+                ? (Color?)null
+                : ProfileScreen.TintOf(RewardCatalog.Find(p.Frame), Color.white));
+        }
+
+        private void OnCosmeticEquipRequested(RewardInfo reward)
+        {
+            _profileScreen.SetCosmeticsStatus("저장하는 중...", false);
+            _profiles.Equip(_nickname, reward, () =>
+            {
+                _profileScreen.ShowProfile(_profiles.Current);
+                _profileScreen.SetCosmeticsStatus($"'{reward.Name}' 장착", false);
+                ApplyCosmetics(_profiles.Current);
+            }, error =>
+            {
+                _profileScreen.ShowProfile(_profiles.Current);
+                _profileScreen.SetCosmeticsStatus($"저장에 실패했습니다: {error}", true);
+            });
         }
 
         private void RefreshMenuProfileIcon()
@@ -1589,6 +1662,7 @@ namespace LiarsBatting.Presentation
             _profiles.Load(nickname, profile =>
             {
                 if (nickname != _nickname) return;   // renamed meanwhile
+                ApplyCosmetics(profile);
                 _menuProfileIcon.sprite = ProfileScreen.PortraitOf(profile.ProfileIcon);
             }, error => Debug.LogWarning($"프로필 불러오기 실패: {error}"));
         }
@@ -1599,7 +1673,11 @@ namespace LiarsBatting.Presentation
             _headerText.text = "프로필";
             _tokenText.text = "";
             _profileScreen.ShowLoading(_nickname);
-            _profiles.Load(_nickname, _profileScreen.ShowProfile,
+            _profiles.Load(_nickname, profile =>
+                {
+                    _profileScreen.ShowProfile(profile);
+                    ApplyCosmetics(profile);
+                },
                 error => _profileScreen.SetStatus($"프로필을 불러오지 못했습니다: {error}", true));
         }
 
@@ -1653,6 +1731,7 @@ namespace LiarsBatting.Presentation
             _inviteWatcher?.StopPolling();
 
             _state = new GameState();
+            _stats = new MatchStats();
             _ai = new AiOpponent();
             _state.AiHero = RandomHeroId();
             _state.AiAbilityCharges = Mathf.Max(0, HeroCatalog.Get(_state.AiHero).Charges);
@@ -1675,6 +1754,7 @@ namespace LiarsBatting.Presentation
             _surrenderButton.gameObject.SetActive(true);
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
+            _opponentHeroPortrait.SetSubtitle("AI");
             _myTurnActive = false;
             RefreshMyAbilityUI();
             _statusPanel.ShowMySecret(playerSecret);
@@ -1699,6 +1779,7 @@ namespace LiarsBatting.Presentation
             ShowOnly(_matchScreen);
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
+            _opponentHeroPortrait.SetSubtitle(_opponentTitle);
             _myTurnActive = false;
             RefreshMyAbilityUI();
             _statusPanel.ShowMySecret(playerSecret);
@@ -1832,7 +1913,11 @@ namespace LiarsBatting.Presentation
             textRt.anchorMax = cardDigit >= 0 ? new Vector2(1f, 0.92f) : Vector2.one;
             textRt.offsetMin = Vector2.zero;
             textRt.offsetMax = Vector2.zero;
-            if (cardDigit >= 0) _turnAnnouncementCard.sprite = CardArt.Digit(cardDigit);
+            if (cardDigit >= 0)
+            {
+                _turnAnnouncementCard.sprite = CardArt.Digit(cardDigit);
+                _turnAnnouncementCard.color = CardArt.Tint;
+            }
             _turnAnnouncementCard.gameObject.SetActive(cardDigit >= 0);
 
             _turnAnnouncementText.text = message;
@@ -1976,6 +2061,7 @@ namespace LiarsBatting.Presentation
 
         private void OnPlayerGuessSubmitted(int[] guess)
         {
+            _stats.Guesses++;
             _timer.Stop();
             _attackPicker.ResetAll();
 
@@ -2022,6 +2108,8 @@ namespace LiarsBatting.Presentation
                 onTrust: EndMyAttackTurnAndPassToOpponent,
                 onChallenge: () =>
                 {
+                    _stats.Challenges++;
+                    if (aiLied) _stats.ChallengesCorrect++; else _stats.ChallengesWrong++;
                     if (aiLied)
                     {
                         GameAudio.Play("SFX_Reveal_Busted");
@@ -2121,6 +2209,7 @@ namespace LiarsBatting.Presentation
 
                 if (!challenge)
                 {
+                    if (playerLied) _stats.LiesBelieved++;
                     _ai.NarrowByOwnGuess(guess, reported);
                     // Say what the opponent decided -- the turn used to just move on without a word.
                     GameAudio.Play("SFX_Trust_Accept");
@@ -2131,6 +2220,7 @@ namespace LiarsBatting.Presentation
 
                 if (playerLied)
                 {
+                    _stats.LiesCaught++;
                     GameAudio.Play("SFX_Reveal_Punished");
                     // Caught: the reported value is known-false, so there's nothing
                     // honest to narrow the AI's model by this turn -- it only gains
@@ -2241,6 +2331,8 @@ namespace LiarsBatting.Presentation
 
             void Resolve(JudgeResult result, bool usedToken)
             {
+                _lastDefenseWasLie = usedToken;
+                if (usedToken) _stats.LiesTold++;
                 _timer.Stop();
                 GameAudio.Play(usedToken ? "SFX_LieToken_Spend" : "SFX_Truth_Declare");
                 onChoice(result, usedToken);
@@ -2353,6 +2445,7 @@ namespace LiarsBatting.Presentation
                 {
                     _timer.Stop();
                     GameAudio.Play("SFX_Hero_Rogue_Insight");
+                    _stats.AbilityUses++;
                     _state.PlayerAbilityCharges--;
                     RefreshMyAbilityUI();
 
@@ -2417,6 +2510,7 @@ namespace LiarsBatting.Presentation
             _resultPopup.Show(playerWon,
                 message ?? (playerWon ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
                 playerWon ? _state.AiSecret : _state.PlayerSecret);
+            SettleMatch(playerWon);
         }
     }
 }

@@ -12,6 +12,7 @@ namespace LiarsBatting.Progression
         public HeroId ProfileIcon = HeroId.Hunter;   // the portrait shown as this player's picture
         public int Wins;
         public int Losses;
+        public PlayerProgress Progress = new PlayerProgress();
 
         public int HumanGames => Wins + Losses;
 

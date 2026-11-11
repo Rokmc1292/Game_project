@@ -43,6 +43,7 @@ namespace LiarsBatting.Presentation
         private readonly CanvasGroup _titleGroup;
         private readonly Text _message;
         private readonly CanvasGroup _messageGroup;
+        private readonly Text _summary;
         private readonly RevealedDigitsRow _digits;
         private readonly CanvasGroup _buttonGroup;
         private readonly Sprite _winTitle;
@@ -69,7 +70,7 @@ namespace LiarsBatting.Presentation
             _panel.anchorMin = new Vector2(0.5f, 0.5f);
             _panel.anchorMax = new Vector2(0.5f, 0.5f);
             _panel.pivot = new Vector2(0.5f, 0.5f);
-            _panel.sizeDelta = new Vector2(640f, 400f);
+            _panel.sizeDelta = new Vector2(640f, 470f);
             _panelGroup = panelGo.GetComponent<CanvasGroup>();
             var panelImage = panelGo.GetComponent<Image>();
             var panelSprite = Resources.Load<Sprite>("Result/result_panel");
@@ -109,6 +110,14 @@ namespace LiarsBatting.Presentation
             _digits = new RevealedDigitsRow(content, 58f, 81f, 12f);
             UiFactory.SetFlexible(_digits.Root, 1, 0);
 
+            // XP / level / challenge summary, filled in by SetSummary once the match is settled.
+            _summary = UiFactory.Text(content, "", 14, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Bold);
+            _summary.raycastTarget = false;
+            UiFactory.SetHeight(_summary, 58);
+            var summaryShadow = _summary.gameObject.AddComponent<Shadow>();
+            summaryShadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
+            summaryShadow.effectDistance = new Vector2(1f, -1.5f);
+
             var buttonRow = UiFactory.HorizontalGroup(content, "ButtonRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(buttonRow, 52);
             UiFactory.SetFlexible(buttonRow, 1, 0);
@@ -121,6 +130,8 @@ namespace LiarsBatting.Presentation
             Root.gameObject.SetActive(false);
         }
 
+        public void SetSummary(string text) => _summary.text = text;
+
         // digits: the secret to show as cards (null = no cards, e.g. the opponent's secret isn't known online).
         public void Show(bool won, string message, int[] digits)
         {
@@ -129,6 +140,7 @@ namespace LiarsBatting.Presentation
             _title.sprite = won ? _winTitle : _loseTitle;
             _title.color = _title.sprite != null ? Color.white : Color.clear;
             _message.text = message;
+            _summary.text = "";
             bool hasDigits = digits != null && digits.Length == 4;
             _digits.Root.gameObject.SetActive(hasDigits);
 

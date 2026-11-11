@@ -128,7 +128,7 @@ namespace LiarsBatting.Presentation
                 cardGo.transform.SetParent(tray, false);
                 var img = cardGo.GetComponent<Image>();
                 img.sprite = CardArt.Digit(d);
-                img.color = Color.white;
+                img.color = CardArt.Tint;
                 img.preserveAspect = true;
                 var btn = cardGo.GetComponent<Button>();
                 btn.targetGraphic = img;
@@ -161,7 +161,7 @@ namespace LiarsBatting.Presentation
             GameAudio.Play("SFX_Card_Select");
             _slotValues[emptyIndex] = digit;
             _slotImages[emptyIndex].sprite = CardArt.Digit(digit);
-            _slotImages[emptyIndex].color = Color.white;
+            _slotImages[emptyIndex].color = CardArt.Tint;
             if (_flightAnimator != null)
                 _flightAnimator.Play(_trayImages[digit], _slots[emptyIndex], _slotImages[emptyIndex]);
             _used[digit] = true;
@@ -233,7 +233,7 @@ namespace LiarsBatting.Presentation
             _slotImages[slotIndex].sprite = null;
             _slotImages[slotIndex].color = UITheme.Surface2;
             _used[digit] = false;
-            _trayImages[digit].color = _digitDisabled[digit] ? TrayDisabledTint : Color.white;
+            _trayImages[digit].color = _digitDisabled[digit] ? TrayDisabledTint : CardArt.Tint;
             RefreshSubmitInteractable();
         }
 
@@ -250,6 +250,15 @@ namespace LiarsBatting.Presentation
             var result = new[] { _slotValues[0], _slotValues[1], _slotValues[2], _slotValues[3] };
             ResetAll();
             _onSubmit?.Invoke(result);
+        }
+
+        // Re-applies the card skin tint after it changes (tray cards that are free to pick).
+        public void RefreshTint()
+        {
+            for (int d = 0; d < 10; d++)
+                if (!_used[d] && !_digitDisabled[d]) _trayImages[d].color = CardArt.Tint;
+            for (int i = 0; i < 4; i++)
+                if (_slotValues[i] >= 0) _slotImages[i].color = CardArt.Tint;
         }
 
         public void ResetAll()
@@ -273,7 +282,7 @@ namespace LiarsBatting.Presentation
         {
             _digitDisabled[digit] = !enabled;
             _trayButtons[digit].interactable = enabled && !_used[digit];
-            _trayImages[digit].color = enabled ? Color.white : TrayDisabledTint;
+            _trayImages[digit].color = enabled ? (_used[digit] ? TrayUsedTint : CardArt.Tint) : TrayDisabledTint;
         }
     }
 }

@@ -21,6 +21,8 @@ namespace LiarsBatting.Presentation
         private readonly Text _tooltipText;
         private readonly Button _abilityButton;
         private readonly Text _abilityButtonText;
+        private readonly Outline _frame;
+        private readonly Text _subtitleText;
         private Action _onAbilityClick;
 
         public HeroPortraitView(Transform parent, bool isMine)
@@ -33,8 +35,19 @@ namespace LiarsBatting.Presentation
             UiFactory.SetSize(portraitGo.transform, 76, 92);
             _portraitImage = portraitGo.GetComponent<Image>();
             _portraitImage.preserveAspect = true;
+            // Equipped portrait frame (player-level reward); off until SetFrame gives it a colour.
+            _frame = portraitGo.AddComponent<Outline>();
+            _frame.effectDistance = new Vector2(3f, -3f);
+            _frame.enabled = false;
 
             _nameText = UiFactory.Text(Root, "", 12, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+
+            if (!isMine)
+            {
+                // The opponent's equipped title (online) or "AI".
+                _subtitleText = UiFactory.Text(Root, "", 11, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Italic);
+                _subtitleText.raycastTarget = false;
+            }
 
             if (isMine)
             {
@@ -97,6 +110,18 @@ namespace LiarsBatting.Presentation
             _abilityButtonText.text = label;
             _abilityButton.interactable = interactable;
             _onAbilityClick = onClick;
+        }
+
+        // null = no frame.
+        public void SetFrame(Color? color)
+        {
+            _frame.enabled = color.HasValue;
+            if (color.HasValue) _frame.effectColor = color.Value;
+        }
+
+        public void SetSubtitle(string text)
+        {
+            if (_subtitleText != null) _subtitleText.text = text ?? "";
         }
 
         public void HideAbilityButton()

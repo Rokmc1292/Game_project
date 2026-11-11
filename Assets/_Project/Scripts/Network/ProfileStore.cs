@@ -1,6 +1,7 @@
 using System;
 using LiarsBatting.Core;
 using LiarsBatting.Progression;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -10,7 +11,8 @@ namespace LiarsBatting.Network
     // client ever writes it, so a cached copy (Current) plus field-level patches is safe: two
     // writes from this one client can't race each other into a lost update.
     //
-    // Fields: nickname, lastSeen (existing), profileIcon (HeroId name), wins, losses.
+    // Fields: nickname, lastSeen (existing), profileIcon (HeroId name), wins, losses,
+    // level, title (equipped title text, for other players), progress (PlayerProgress as JSON).
     // Older documents simply lack the new fields and read back as the defaults.
     public class ProfileStore
     {
@@ -27,21 +29,38 @@ namespace LiarsBatting.Network
 
         private static string PathOf(string nickname) => $"{Collection}/{nickname}";
 
+        private static PlayerProfile Parse(string nickname, JObject doc)
+        {
+            var profile = new PlayerProfile { Nickname = nickname };
+            if (doc == null) return profile;
+
+            string icon = FirestoreClient.ReadString(doc, "profileIcon", "");
+            if (Enum.TryParse(icon, out HeroId hero)) profile.ProfileIcon = hero;
+            profile.Wins = (int)FirestoreClient.ReadInt(doc, "wins", 0);
+            profile.Losses = (int)FirestoreClient.ReadInt(doc, "losses", 0);
+
+            string json = FirestoreClient.ReadString(doc, "progress", "");
+            if (!string.IsNullOrEmpty(json))
+            {
+                try { profile.Progress = JsonConvert.DeserializeObject<PlayerProgress>(json) ?? new PlayerProgress(); }
+                catch (Exception e) { Debug.LogWarning($"진행도 읽기 실패, 새로 시작합니다: {e.Message}"); }
+            }
+            return profile;
+        }
+
         public void Load(string nickname, Action<PlayerProfile> onLoaded, Action<string> onError)
         {
             _db.GetDocument(PathOf(nickname), doc =>
             {
-                var profile = new PlayerProfile { Nickname = nickname };
-                if (doc != null)
-                {
-                    string icon = FirestoreClient.ReadString(doc, "profileIcon", "");
-                    if (Enum.TryParse(icon, out HeroId hero)) profile.ProfileIcon = hero;
-                    profile.Wins = (int)FirestoreClient.ReadInt(doc, "wins", 0);
-                    profile.Losses = (int)FirestoreClient.ReadInt(doc, "losses", 0);
-                }
-                Current = profile;
-                onLoaded?.Invoke(profile);
+                Current = Parse(nickname, doc);
+                onLoaded?.Invoke(Current);
             }, onError);
+        }
+
+        // Someone else's profile (e.g. the online opponent's title). Never replaces Current.
+        public void Fetch(string nickname, Action<PlayerProfile> onLoaded, Action<string> onError)
+        {
+            _db.GetDocument(PathOf(nickname), doc => onLoaded?.Invoke(Parse(nickname, doc)), onError);
         }
 
         // Runs `action` against Current, loading it first if it isn't this player's yet.
@@ -64,21 +83,51 @@ namespace LiarsBatting.Network
             }, onError);
         }
 
-        // One finished match against a person (surrenders included) -- never called for AI matches.
-        public void RecordHumanMatch(string nickname, bool won)
+        private static JObject ProgressFields(PlayerProfile profile) => new JObject
+        {
+            ["progress"] = FirestoreClient.StringField(JsonConvert.SerializeObject(profile.Progress)),
+            ["level"] = FirestoreClient.IntField(profile.Progress.Level),
+            ["title"] = FirestoreClient.StringField(RewardCatalog.TitleText(profile.Progress.Title))
+        };
+
+        private static readonly string[] ProgressFieldPaths = { "progress", "level", "title" };
+
+        // A finished match: XP, level, challenges, and (online only) the record against people.
+        public void SettleMatch(string nickname, MatchStats stats, Action<MatchSettlement> onSettled)
         {
             WithCurrent(nickname, profile =>
             {
-                if (won) profile.Wins++; else profile.Losses++;
-                var fields = new JObject
+                if (stats.Online)
                 {
-                    ["wins"] = FirestoreClient.IntField(profile.Wins),
-                    ["losses"] = FirestoreClient.IntField(profile.Losses),
-                    ["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-                };
-                _db.PatchFields(PathOf(nickname), fields, new[] { "wins", "losses", "lastSeen" },
-                    null, error => Debug.LogWarning($"전적 저장 실패: {error}"));
-            }, error => Debug.LogWarning($"전적 저장 실패(프로필 읽기): {error}"));
+                    if (stats.Won) profile.Wins++; else profile.Losses++;
+                }
+                var settlement = ProgressionService.ApplyMatch(profile.Progress, stats, DateTime.UtcNow);
+
+                var fields = ProgressFields(profile);
+                fields["wins"] = FirestoreClient.IntField(profile.Wins);
+                fields["losses"] = FirestoreClient.IntField(profile.Losses);
+                fields["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                var paths = new[] { "progress", "level", "title", "wins", "losses", "lastSeen" };
+                _db.PatchFields(PathOf(nickname), fields, paths,
+                    null, error => Debug.LogWarning($"진행도 저장 실패: {error}"));
+
+                onSettled?.Invoke(settlement);
+            }, error => Debug.LogWarning($"진행도 저장 실패(프로필 읽기): {error}"));
+        }
+
+        public void Equip(string nickname, RewardInfo reward, Action onSaved, Action<string> onError)
+        {
+            WithCurrent(nickname, profile =>
+            {
+                if (!profile.Progress.IsUnlocked(reward)) { onError?.Invoke("아직 잠겨 있습니다."); return; }
+                string previous = profile.Progress.EquippedId(reward.Kind);
+                profile.Progress.Equip(reward);
+                _db.PatchFields(PathOf(nickname), ProgressFields(profile), ProgressFieldPaths, onSaved, error =>
+                {
+                    profile.Progress.Equip(RewardCatalog.Find(previous) ?? reward);   // undo locally
+                    onError?.Invoke(error);
+                });
+            }, onError);
         }
 
         // Moves the whole document to the new name: copy every field to players/{newName}, then

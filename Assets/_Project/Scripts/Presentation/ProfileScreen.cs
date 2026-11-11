@@ -7,10 +7,12 @@ using UnityEngine.UI;
 
 namespace LiarsBatting.Presentation
 {
-    // The 프로필 screen: my picture (one of the hero portraits), nickname, record against people,
-    // a portrait picker and the nickname change that used to be its own screen. Pure view: the
-    // caller (GameBootstrap) does the saving through ProfileStore and reports back with
-    // SetStatus / ShowProfile.
+    // The 프로필 screen, in tabs:
+    //   프로필   - my picture (a hero portrait), nickname, title, level bar, record against people,
+    //              portrait picker and nickname change
+    //   도전과제 - today's and this week's challenges with progress
+    //   꾸미기   - equip unlocked titles, portrait frames, background skins and card skins
+    // Pure view: GameBootstrap does the saving through ProfileStore and reports back.
     public class ProfileScreen
     {
         public readonly GameObject Root;
@@ -18,11 +20,22 @@ namespace LiarsBatting.Presentation
         public Action OnBack;
         public Action<HeroId> OnIconPicked;
         public Action<string> OnRenameRequested;
+        public Action<RewardInfo> OnEquipRequested;
 
         private static readonly Color Brass = new Color32(214, 160, 70, 255);
+        private static readonly Color Slot = new Color(0.04f, 0.035f, 0.03f, 0.9f);
 
+        private readonly List<GameObject> _pages = new List<GameObject>();
+        private readonly List<Button> _tabButtons = new List<Button>();
+
+        // profile tab
         private readonly Image _bigPortrait;
+        private readonly Outline _bigPortraitFrame;
         private readonly Text _nicknameText;
+        private readonly Text _titleText;
+        private readonly Text _levelText;
+        private readonly RectTransform _xpFill;
+        private readonly Text _xpText;
         private readonly Text _recordText;
         private readonly Text _winRateText;
         private readonly Text _statusText;
@@ -30,6 +43,40 @@ namespace LiarsBatting.Presentation
         private readonly Button _renameButton;
         private readonly Dictionary<HeroId, Outline> _iconHighlights = new Dictionary<HeroId, Outline>();
         private readonly List<Button> _iconButtons = new List<Button>();
+
+        // challenges tab
+        private readonly Text _dailyHeader;
+        private readonly Text _weeklyHeader;
+        private readonly List<ChallengeRow> _dailyRows = new List<ChallengeRow>();
+        private readonly List<ChallengeRow> _weeklyRows = new List<ChallengeRow>();
+
+        // cosmetics tab
+        private readonly List<CosmeticOption> _cosmetics = new List<CosmeticOption>();
+        private readonly Text _cosmeticsStatus;
+
+        private class ChallengeRow
+        {
+            public Text Description, Progress, Reward;
+            public Image Background;
+        }
+
+        private class CosmeticOption
+        {
+            public RewardInfo Reward;
+            public Button Button;
+            public Text Label;
+        }
+
+        // A HorizontalGroup with childForceExpandHeight reports itself as vertically flexible, so a
+        // vertical layout around it would hand it a share of the spare height (the tab row grew huge).
+        private static void FixedHeight(Component row, float height)
+        {
+            UiFactory.SetHeight(row, height);
+            row.GetComponent<LayoutElement>().flexibleHeight = 0;
+        }
+
+        // Selected = the highlighted plate with the amber border (same as the menu's primary buttons).
+        private static void SetSelected(Button button, bool selected) => MenuButtonStyle.Apply(button, primary: selected);
 
         public ProfileScreen(Transform root)
         {
@@ -45,59 +92,76 @@ namespace LiarsBatting.Presentation
             panel.anchorMin = new Vector2(0.5f, 0.5f);
             panel.anchorMax = new Vector2(0.5f, 0.5f);
             panel.pivot = new Vector2(0.5f, 0.5f);
-            panel.sizeDelta = new Vector2(900f, 560f);
+            panel.sizeDelta = new Vector2(1040f, 600f);
             MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
 
-            var columns = UiFactory.HorizontalGroup(panel, "Columns", spacing: 40,
-                padding: new RectOffset(40, 40, 32, 28), childAlign: TextAnchor.UpperLeft);
+            var layout = UiFactory.VerticalGroup(panel, "Layout", spacing: 14, padding: new RectOffset(36, 36, 24, 24));
+            UiFactory.StretchToFillParent(layout);
+
+            // ---- tab row ----
+            var tabRow = UiFactory.HorizontalGroup(layout, "Tabs", spacing: 10, childAlign: TextAnchor.MiddleLeft);
+            FixedHeight(tabRow, 44);
+            AddTab(tabRow, "프로필", 0);
+            AddTab(tabRow, "도전과제", 1);
+            AddTab(tabRow, "꾸미기", 2);
+            var tabSpacer = new GameObject("Spacer", typeof(RectTransform), typeof(LayoutElement));
+            tabSpacer.transform.SetParent(tabRow, false);
+            tabSpacer.GetComponent<LayoutElement>().flexibleWidth = 1;
+            var back = UiFactory.Button(tabRow, "메인 메뉴로", UITheme.Surface2, UITheme.Ink, () => OnBack?.Invoke(), 15);
+            UiFactory.SetSize(back, 160, 44);
+            MenuButtonStyle.Apply(back, primary: false);
+
+            var pageHost = new GameObject("Pages", typeof(RectTransform), typeof(LayoutElement));
+            pageHost.transform.SetParent(layout, false);
+            pageHost.GetComponent<LayoutElement>().flexibleHeight = 1;
+
+            // ================= 프로필 =================
+            var profilePage = NewPage(pageHost.transform, "ProfilePage");
+            var columns = UiFactory.HorizontalGroup(profilePage, "Columns", spacing: 40, childAlign: TextAnchor.UpperLeft);
             UiFactory.StretchToFillParent(columns);
-            columns.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = true;
 
-            // ---- left: who I am ----
-            var left = UiFactory.VerticalGroup(columns, "Identity", spacing: 10, childAlign: TextAnchor.UpperCenter);
-            UiFactory.SetWidth(left, 280);
+            var left = UiFactory.VerticalGroup(columns, "Identity", spacing: 8, childAlign: TextAnchor.UpperCenter);
+            UiFactory.SetWidth(left, 300);
 
-            var title = UiFactory.Text(left, "프로필", 24, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.SetHeight(title, 34);
-            AddShadow(title);
-
-            var frame = UiFactory.Panel(left, "PortraitFrame", new Color(0.04f, 0.035f, 0.03f, 0.9f));
-            UiFactory.SetSize(frame, 200, 242);
-            var frameOutline = frame.gameObject.AddComponent<Outline>();
-            frameOutline.effectColor = Brass;
-            frameOutline.effectDistance = new Vector2(2f, -2f);
-            var bigPortraitGo = new GameObject("Portrait", typeof(RectTransform), typeof(Image));
-            var bigPortraitRt = (RectTransform)bigPortraitGo.transform;
-            bigPortraitRt.SetParent(frame, false);
-            UiFactory.StretchToFillParent(bigPortraitRt);
-            bigPortraitRt.offsetMin = new Vector2(8, 8);
-            bigPortraitRt.offsetMax = new Vector2(-8, -8);
-            _bigPortrait = bigPortraitGo.GetComponent<Image>();
-            _bigPortrait.preserveAspect = true;
-            _bigPortrait.raycastTarget = false;
+            var frame = UiFactory.Panel(left, "PortraitFrame", Slot);
+            UiFactory.SetSize(frame, 170, 206);
+            _bigPortraitFrame = frame.gameObject.AddComponent<Outline>();
+            _bigPortraitFrame.effectColor = Brass;
+            _bigPortraitFrame.effectDistance = new Vector2(2f, -2f);
+            _bigPortrait = NewImage(frame, "Portrait", new Vector2(8, 8), new Vector2(-8, -8));
 
             _nicknameText = UiFactory.Text(left, "", 22, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.SetHeight(_nicknameText, 32);
+            UiFactory.SetHeight(_nicknameText, 30);
             AddShadow(_nicknameText);
+            _titleText = UiFactory.Text(left, "", 14, Brass, TextAnchor.MiddleCenter, FontStyle.Italic);
+            UiFactory.SetHeight(_titleText, 20);
+
+            _levelText = UiFactory.Text(left, "", 16, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(_levelText, 22);
+            var xpTrack = UiFactory.Panel(left, "XpTrack", Slot);
+            UiFactory.SetHeight(xpTrack, 12);
+            _xpFill = UiFactory.Panel(xpTrack, "XpFill", Brass);
+            _xpFill.anchorMin = Vector2.zero;
+            _xpFill.anchorMax = new Vector2(0, 1);
+            _xpFill.offsetMin = Vector2.zero;
+            _xpFill.offsetMax = Vector2.zero;
+            _xpText = UiFactory.Text(left, "", 12, UITheme.Muted, TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(_xpText, 18);
 
             var divider = UiFactory.Panel(left, "Divider", UITheme.Border);
             UiFactory.SetHeight(divider, 1);
-
             var recordLabel = UiFactory.Text(left, "사람 상대 전적", 13, UITheme.Muted, TextAnchor.MiddleCenter);
-            UiFactory.SetHeight(recordLabel, 20);
-            _recordText = UiFactory.Text(left, "", 26, Brass, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.SetHeight(_recordText, 36);
+            UiFactory.SetHeight(recordLabel, 18);
+            _recordText = UiFactory.Text(left, "", 24, Brass, TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(_recordText, 32);
             AddShadow(_recordText);
             _winRateText = UiFactory.Text(left, "", 13, UITheme.Muted, TextAnchor.MiddleCenter);
-            UiFactory.SetHeight(_winRateText, 20);
+            UiFactory.SetHeight(_winRateText, 18);
 
-            // ---- right: what I can change ----
             var right = UiFactory.VerticalGroup(columns, "Settings", spacing: 10, childAlign: TextAnchor.UpperLeft);
             UiFactory.SetFlexible(right, 1, 0);
 
-            var iconLabel = UiFactory.Text(right, "프로필 사진", 15, Brass, TextAnchor.MiddleLeft, FontStyle.Bold);
-            UiFactory.SetHeight(iconLabel, 24);
-
+            AddLabel(right, "프로필 사진");
             var grid = UiFactory.Grid(right, "IconGrid", columns: 4, cellSize: 96, spacing: 10);
             var gridLayout = grid.GetComponent<GridLayoutGroup>();
             gridLayout.cellSize = new Vector2(96, 118);
@@ -105,13 +169,11 @@ namespace LiarsBatting.Presentation
             UiFactory.SetHeight(grid, 118 * 2 + 10);
             foreach (var info in HeroCatalog.All) BuildIconCell(grid, info);
 
-            var renameLabel = UiFactory.Text(right, "닉네임 변경 (최대 12자)", 15, Brass, TextAnchor.MiddleLeft, FontStyle.Bold);
-            UiFactory.SetHeight(renameLabel, 24);
-
+            AddLabel(right, "닉네임 변경 (최대 12자)");
             var renameRow = UiFactory.HorizontalGroup(right, "RenameRow", spacing: 10);
-            UiFactory.SetHeight(renameRow, 48);
+            FixedHeight(renameRow, 48);
             _renameInput = UiFactory.InputField(renameRow, "새 닉네임");
-            _renameInput.GetComponent<Image>().color = new Color(0.04f, 0.035f, 0.03f, 0.9f);
+            _renameInput.GetComponent<Image>().color = Slot;
             var inputOutline = _renameInput.gameObject.AddComponent<Outline>();
             inputOutline.effectColor = UITheme.Border;
             inputOutline.effectDistance = new Vector2(1.5f, -1.5f);
@@ -128,17 +190,78 @@ namespace LiarsBatting.Presentation
             _statusText = UiFactory.Text(right, "", 13, UITheme.Muted, TextAnchor.MiddleLeft);
             UiFactory.SetHeight(_statusText, 20);
 
-            var spacer = new GameObject("Spacer", typeof(RectTransform), typeof(LayoutElement));
-            spacer.transform.SetParent(right, false);
-            spacer.GetComponent<LayoutElement>().flexibleHeight = 1;
+            // ================= 도전과제 =================
+            var challengePage = NewPage(pageHost.transform, "ChallengePage");
+            var challengeList = UiFactory.VerticalGroup(challengePage, "List", spacing: 8);
+            UiFactory.StretchToFillParent(challengeList);
+            _dailyHeader = AddLabel(challengeList, "");
+            for (int i = 0; i < ChallengeCatalog.DailyCount; i++) _dailyRows.Add(BuildChallengeRow(challengeList));
+            var gap = new GameObject("Gap", typeof(RectTransform), typeof(LayoutElement));
+            gap.transform.SetParent(challengeList, false);
+            gap.GetComponent<LayoutElement>().minHeight = 16;
+            _weeklyHeader = AddLabel(challengeList, "");
+            for (int i = 0; i < ChallengeCatalog.WeeklyCount; i++) _weeklyRows.Add(BuildChallengeRow(challengeList));
 
-            var backRow = UiFactory.HorizontalGroup(right, "BackRow", spacing: 0, childAlign: TextAnchor.MiddleRight);
-            UiFactory.SetHeight(backRow, 48);
-            var back = UiFactory.Button(backRow, "메인 메뉴로", UITheme.Surface2, UITheme.Ink, () => OnBack?.Invoke(), 15);
-            UiFactory.SetSize(back, 180, 48);
-            MenuButtonStyle.Apply(back, primary: false);
+            // ================= 꾸미기 =================
+            var cosmeticsPage = NewPage(pageHost.transform, "CosmeticsPage");
+            var cosmeticsList = UiFactory.VerticalGroup(cosmeticsPage, "List", spacing: 8);
+            UiFactory.StretchToFillParent(cosmeticsList);
+            BuildCosmeticSection(cosmeticsList, "칭호", RewardKind.Title);
+            BuildCosmeticSection(cosmeticsList, "초상화 테두리", RewardKind.Frame);
+            BuildCosmeticSection(cosmeticsList, "배경 스킨", RewardKind.Background);
+            BuildCosmeticSection(cosmeticsList, "카드 스킨", RewardKind.CardSkin);
+            _cosmeticsStatus = UiFactory.Text(cosmeticsList, "", 13, UITheme.Muted, TextAnchor.MiddleLeft);
+            UiFactory.SetHeight(_cosmeticsStatus, 20);
 
+            SelectTab(0);
             Root.SetActive(false);
+        }
+
+        // ---------- building blocks ----------
+
+        private void AddTab(Transform row, string label, int index)
+        {
+            var button = UiFactory.Button(row, label, UITheme.Surface2, UITheme.Ink, () => SelectTab(index), 15);
+            UiFactory.SetSize(button, 130, 44);
+            MenuButtonStyle.Apply(button, primary: false);
+            _tabButtons.Add(button);
+        }
+
+        private RectTransform NewPage(Transform host, string name)
+        {
+            var page = new GameObject(name, typeof(RectTransform));
+            var rt = (RectTransform)page.transform;
+            rt.SetParent(host, false);
+            UiFactory.StretchToFillParent(rt);
+            _pages.Add(page);
+            return rt;
+        }
+
+        public void SelectTab(int index)
+        {
+            for (int i = 0; i < _pages.Count; i++) _pages[i].SetActive(i == index);
+            for (int i = 0; i < _tabButtons.Count; i++) SetSelected(_tabButtons[i], i == index);
+        }
+
+        private static Text AddLabel(Transform parent, string text)
+        {
+            var label = UiFactory.Text(parent, text, 15, Brass, TextAnchor.MiddleLeft, FontStyle.Bold);
+            UiFactory.SetHeight(label, 24);
+            return label;
+        }
+
+        private static Image NewImage(Transform parent, string name, Vector2 offsetMin, Vector2 offsetMax)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(parent, false);
+            UiFactory.StretchToFillParent(rt);
+            rt.offsetMin = offsetMin;
+            rt.offsetMax = offsetMax;
+            var image = go.GetComponent<Image>();
+            image.preserveAspect = true;
+            image.raycastTarget = false;
+            return image;
         }
 
         private void BuildIconCell(Transform grid, HeroInfo info)
@@ -147,7 +270,7 @@ namespace LiarsBatting.Presentation
             var cell = new GameObject($"Icon_{hero}", typeof(RectTransform), typeof(Image), typeof(Button));
             cell.transform.SetParent(grid, false);
             var bg = cell.GetComponent<Image>();
-            bg.color = new Color(0.04f, 0.035f, 0.03f, 0.9f);
+            bg.color = Slot;
             var button = cell.GetComponent<Button>();
             button.targetGraphic = bg;
             button.onClick.AddListener(() => GameAudio.Play("SFX_UI_Click", volume: 0.6f));
@@ -161,16 +284,7 @@ namespace LiarsBatting.Presentation
             highlight.enabled = false;
             _iconHighlights[hero] = highlight;
 
-            var portraitGo = new GameObject("Portrait", typeof(RectTransform), typeof(Image));
-            var portraitRt = (RectTransform)portraitGo.transform;
-            portraitRt.SetParent(cell.transform, false);
-            UiFactory.StretchToFillParent(portraitRt);
-            portraitRt.offsetMin = new Vector2(6, 22);
-            portraitRt.offsetMax = new Vector2(-6, -4);
-            var portrait = portraitGo.GetComponent<Image>();
-            portrait.sprite = PortraitOf(hero);
-            portrait.preserveAspect = true;
-            portrait.raycastTarget = false;
+            NewImage(cell.transform, "Portrait", new Vector2(6, 22), new Vector2(-6, -4)).sprite = PortraitOf(hero);
 
             var name = UiFactory.Text(cell.transform, info.Name, 12, UITheme.Ink, TextAnchor.MiddleCenter);
             name.raycastTarget = false;
@@ -182,28 +296,127 @@ namespace LiarsBatting.Presentation
             nameRt.sizeDelta = new Vector2(0, 20);
         }
 
+        private static ChallengeRow BuildChallengeRow(Transform parent)
+        {
+            var rowRt = UiFactory.HorizontalGroup(parent, "Challenge", spacing: 16,
+                padding: new RectOffset(16, 16, 0, 0), childAlign: TextAnchor.MiddleLeft);
+            FixedHeight(rowRt, 46);
+            var bg = rowRt.gameObject.AddComponent<Image>();
+            bg.color = Slot;
+            var row = new ChallengeRow { Background = bg };
+            row.Description = UiFactory.Text(rowRt, "", 15, UITheme.Ink, TextAnchor.MiddleLeft);
+            UiFactory.SetFlexible(row.Description, 1, 0);
+            row.Progress = UiFactory.Text(rowRt, "", 15, UITheme.Ink, TextAnchor.MiddleRight, FontStyle.Bold);
+            UiFactory.SetWidth(row.Progress, 90);
+            row.Reward = UiFactory.Text(rowRt, "", 14, Brass, TextAnchor.MiddleRight, FontStyle.Bold);
+            UiFactory.SetWidth(row.Reward, 100);
+            return row;
+        }
+
+        private void BuildCosmeticSection(Transform parent, string title, RewardKind kind)
+        {
+            AddLabel(parent, title);
+            var row = UiFactory.HorizontalGroup(parent, title, spacing: 10, childAlign: TextAnchor.MiddleLeft);
+            FixedHeight(row, 52);
+            foreach (var reward in RewardCatalog.OfKind(kind))
+            {
+                var r = reward;
+                var button = UiFactory.Button(row, r.Name, UITheme.Surface2, UITheme.Ink, () => OnEquipRequested?.Invoke(r), 14);
+                UiFactory.SetSize(button, 170, 50);
+                MenuButtonStyle.Apply(button, primary: false);
+                _cosmetics.Add(new CosmeticOption
+                {
+                    Reward = r, Button = button, Label = button.GetComponentInChildren<Text>()
+                });
+            }
+        }
+
         public static Sprite PortraitOf(HeroId hero) => Resources.Load<Sprite>($"Heroes/Hero_{hero}_Portrait");
+
+        public static Color TintOf(RewardInfo reward, Color fallback) =>
+            reward != null && !string.IsNullOrEmpty(reward.Tint) ? UITheme.Hex(reward.Tint) : fallback;
+
+        // ---------- filling ----------
 
         // Shown right away with what's known (the nickname) while the profile loads.
         public void ShowLoading(string nickname)
         {
             _nicknameText.text = nickname;
+            _titleText.text = "";
+            _levelText.text = "";
+            _xpText.text = "";
             _recordText.text = "…";
             _winRateText.text = "불러오는 중";
             _renameInput.text = "";
             SetStatus("", false);
+            _cosmeticsStatus.text = "";
             SetInteractable(false);
         }
 
         public void ShowProfile(PlayerProfile profile)
         {
+            var p = profile.Progress;
+            ProgressionService.RollPeriods(p, DateTime.UtcNow);   // show today's set even before a match
+
             _nicknameText.text = profile.Nickname;
+            _titleText.text = RewardCatalog.TitleText(p.Title);
+            _bigPortraitFrame.effectColor = TintOf(RewardCatalog.Find(p.Frame), Brass);
+            _bigPortraitFrame.effectDistance = p.Frame == RewardCatalog.NoFrame ? new Vector2(2f, -2f) : new Vector2(4f, -4f);
+
+            bool maxed = p.Level >= LevelTable.MaxPlayerLevel;
+            int need = LevelTable.PlayerXpToNext(p.Level);
+            _levelText.text = $"Lv.{p.Level}";
+            _xpFill.anchorMax = new Vector2(maxed ? 1f : Mathf.Clamp01((float)p.Xp / need), 1f);
+            _xpText.text = maxed ? "최고 레벨" : $"{p.Xp} / {need} XP";
+
             _recordText.text = profile.RecordText;
             _winRateText.text = profile.HumanGames == 0
                 ? "아직 사람과 대전한 기록이 없습니다"
                 : $"승률 {profile.WinRatePercent}% · 총 {profile.HumanGames}판";
             SetSelectedIcon(profile.ProfileIcon);
+
+            var now = DateTime.UtcNow;
+            _dailyHeader.text = $"일일 도전과제  ·  초기화까지 {FormatSpan(ChallengeCatalog.UntilDailyReset(now))}";
+            FillRows(_dailyRows, ChallengeCatalog.DailyFor(p.DailyPeriod), p.Daily, p.DailyDone, LevelTable.DailyChallengeXp);
+            _weeklyHeader.text = $"주간 도전과제  ·  초기화까지 {FormatSpan(ChallengeCatalog.UntilWeeklyReset(now))}";
+            FillRows(_weeklyRows, ChallengeCatalog.WeeklyFor(p.WeeklyPeriod), p.Weekly, p.WeeklyDone, LevelTable.WeeklyChallengeXp);
+
+            foreach (var option in _cosmetics)
+            {
+                bool unlocked = p.IsUnlocked(option.Reward);
+                option.Button.interactable = unlocked;
+                option.Label.text = unlocked ? option.Reward.Name : $"{option.Reward.Name}\nLv.{option.Reward.Level} 해금";
+                SetSelected(option.Button, p.EquippedId(option.Reward.Kind) == option.Reward.Id);
+            }
+
             SetInteractable(true);
+        }
+
+        private static void FillRows(List<ChallengeRow> rows, List<ChallengeDef> defs, Dictionary<string, int> progress,
+            List<string> done, int xp)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                bool has = i < defs.Count;
+                row.Background.gameObject.SetActive(has);
+                if (!has) continue;
+                var def = defs[i];
+                bool complete = done.Contains(def.Id);
+                progress.TryGetValue(def.Id, out int value);
+                row.Description.text = def.Text;
+                row.Description.color = complete ? UITheme.Muted : UITheme.Ink;
+                row.Progress.text = complete ? "완료" : $"{value} / {def.Target}";
+                row.Progress.color = complete ? Brass : UITheme.Ink;
+                row.Reward.text = $"+{xp} XP";
+            }
+        }
+
+        private static string FormatSpan(TimeSpan span)
+        {
+            if (span.TotalDays >= 1) return $"{(int)span.TotalDays}일 {span.Hours}시간";
+            if (span.TotalHours >= 1) return $"{(int)span.TotalHours}시간 {span.Minutes}분";
+            return $"{Math.Max(1, span.Minutes)}분";
         }
 
         public void SetSelectedIcon(HeroId hero)
@@ -224,6 +437,12 @@ namespace LiarsBatting.Presentation
         {
             _statusText.text = message;
             _statusText.color = isError ? UITheme.Clay : UITheme.Muted;
+        }
+
+        public void SetCosmeticsStatus(string message, bool isError)
+        {
+            _cosmeticsStatus.text = message;
+            _cosmeticsStatus.color = isError ? UITheme.Clay : UITheme.Muted;
         }
 
         private static void AddShadow(Text text)
