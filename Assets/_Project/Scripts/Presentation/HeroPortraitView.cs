@@ -43,12 +43,14 @@ namespace LiarsBatting.Presentation
 
             _nameText = UiFactory.Text(Root, "", 12, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
 
-            if (!isMine)
-            {
-                // The opponent's equipped title (online) or "AI".
-                _subtitleText = UiFactory.Text(Root, "", 11, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Italic);
-                _subtitleText.raycastTarget = false;
-            }
+            // The player's equipped title under the hero name (mine, the online opponent's, or "AI"
+            // for the AI). Hidden while empty so it takes no room.
+            _subtitleText = UiFactory.Text(Root, "", 11, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Italic);
+            _subtitleText.raycastTarget = false;
+            var subtitleShadow = _subtitleText.gameObject.AddComponent<Shadow>();
+            subtitleShadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
+            subtitleShadow.effectDistance = new Vector2(1f, -1f);
+            _subtitleText.gameObject.SetActive(false);
 
             if (isMine)
             {
@@ -126,7 +128,8 @@ namespace LiarsBatting.Presentation
 
         public void SetSubtitle(string text)
         {
-            if (_subtitleText != null) _subtitleText.text = text ?? "";
+            _subtitleText.text = text ?? "";
+            _subtitleText.gameObject.SetActive(!string.IsNullOrEmpty(text));
         }
 
         public void HideAbilityButton()

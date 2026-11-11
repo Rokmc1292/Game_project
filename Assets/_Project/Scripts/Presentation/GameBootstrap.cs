@@ -1818,6 +1818,7 @@ namespace LiarsBatting.Presentation
             _opponentHeroPortrait.SetHero(_state.AiHero);
             _opponentHeroPortrait.SetSubtitle("AI");
             _myHeroPortrait.SetLook(_state.PlayerHero, _profiles.Current?.Progress);
+            _myHeroPortrait.SetSubtitle(RewardCatalog.TitleText(_profiles.Current?.Progress.Title));
             _opponentHeroPortrait.SetLook(_state.AiHero, null);
             _myTurnActive = false;
             RefreshMyAbilityUI();
@@ -1846,6 +1847,7 @@ namespace LiarsBatting.Presentation
             _opponentHeroPortrait.SetHero(_state.AiHero);
             _opponentHeroPortrait.SetSubtitle(_opponentTitle);
             _myHeroPortrait.SetLook(_state.PlayerHero, _profiles.Current?.Progress);
+            _myHeroPortrait.SetSubtitle(RewardCatalog.TitleText(_profiles.Current?.Progress.Title));
             _opponentHeroPortrait.SetLook(_state.AiHero, _opponentProgress);
             _myTurnActive = false;
             RefreshMyAbilityUI();
