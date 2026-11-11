@@ -252,13 +252,20 @@ namespace LiarsBatting.Presentation
             _onSubmit?.Invoke(result);
         }
 
-        // Re-applies the card skin tint after it changes (tray cards that are free to pick).
+        // Re-applies the card skin (art and tint) after it changes.
         public void RefreshTint()
         {
             for (int d = 0; d < 10; d++)
+            {
+                _trayImages[d].sprite = CardArt.Digit(d);
                 if (!_used[d] && !_digitDisabled[d]) _trayImages[d].color = CardArt.Tint;
+            }
             for (int i = 0; i < 4; i++)
-                if (_slotValues[i] >= 0) _slotImages[i].color = CardArt.Tint;
+                if (_slotValues[i] >= 0)
+                {
+                    _slotImages[i].sprite = CardArt.Digit(_slotValues[i]);
+                    _slotImages[i].color = CardArt.Tint;
+                }
         }
 
         public void ResetAll()

@@ -119,11 +119,13 @@ namespace LiarsBatting.Presentation
         // or the online opponent's; null = the plain portrait). Call after SetHero.
         public void SetLook(HeroId hero, PlayerProgress progress) => PortraitLook.Apply(_portraitImage, hero, progress);
 
-        // null = no frame.
-        public void SetFrame(Color? color)
+        // The equipped portrait frame: its art drawn over the portrait, or (for a frame without
+        // art) a plain coloured outline. fallbackColor null = no frame at all.
+        public void SetFrame(string frameId, Color? fallbackColor)
         {
-            _frame.enabled = color.HasValue;
-            if (color.HasValue) _frame.effectColor = color.Value;
+            bool hasArt = PortraitFrame.Apply(_portraitImage, frameId);
+            _frame.enabled = !hasArt && fallbackColor.HasValue;
+            if (_frame.enabled) _frame.effectColor = fallbackColor.Value;
         }
 
         public void SetSubtitle(string text)

@@ -1693,13 +1693,25 @@ namespace LiarsBatting.Presentation
         {
             if (profile == null) return;
             var p = profile.Progress;
-            _rootBackground.color = ProfileScreen.TintOf(RewardCatalog.Find(p.Background), Color.white);
-            CardArt.Tint = ProfileScreen.TintOf(RewardCatalog.Find(p.CardSkin), Color.white);
+
+            // Background: the skin's art when it has one, else the default table tinted.
+            var backgroundArt = CardArt.BackgroundSkin(p.Background);
+            _rootBackground.sprite = backgroundArt != null ? backgroundArt : CardArt.Background();
+            _rootBackground.color = backgroundArt != null
+                ? Color.white
+                : ProfileScreen.TintOf(RewardCatalog.Find(p.Background), Color.white);
+
+            // Cards: the skin's card set when it has one, else the default cards tinted.
+            CardArt.SetSkin(p.CardSkin == RewardCatalog.DefaultCards ? null : p.CardSkin,
+                ProfileScreen.TintOf(RewardCatalog.Find(p.CardSkin), Color.white));
             _setupPicker.RefreshTint();
             _attackPicker.RefreshTint();
-            _myHeroPortrait.SetFrame(p.Frame == RewardCatalog.NoFrame
+
+            // Portrait frame on my match portrait and my menu picture.
+            _myHeroPortrait.SetFrame(p.Frame, p.Frame == RewardCatalog.NoFrame
                 ? (Color?)null
                 : ProfileScreen.TintOf(RewardCatalog.Find(p.Frame), Color.white));
+            PortraitFrame.Apply(_menuProfileIcon, p.Frame);
         }
 
         private void OnCosmeticEquipRequested(RewardInfo reward)

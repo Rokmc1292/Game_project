@@ -47,6 +47,49 @@ namespace LiarsBatting.Presentation
         }
     }
 
+    // Portrait frames (player-level reward): an arch-shaped metal frame drawn over the portrait.
+    // The art (Resources/Cosmetics/frame_*) is the 512x620 portrait canvas plus 30px on every
+    // side, so the overlay sits on the portrait's rect stretched outwards by that margin.
+    public static class PortraitFrame
+    {
+        private const string OverlayName = "FrameOverlay";
+        private const float PadX = 30f / 512f;
+        private const float PadY = 30f / 620f;
+
+        public static Sprite ArtFor(string frameId) =>
+            string.IsNullOrEmpty(frameId) || frameId == RewardCatalog.NoFrame
+                ? null
+                : Resources.Load<Sprite>($"Cosmetics/{frameId}");
+
+        // Shows the frame's art over `portrait` (or hides it). True when art was applied.
+        public static bool Apply(Image portrait, string frameId)
+        {
+            var existing = portrait.transform.Find(OverlayName);
+            var overlay = existing != null ? existing.GetComponent<Image>() : null;
+            var art = ArtFor(frameId);
+            if (art == null)
+            {
+                if (overlay != null) overlay.gameObject.SetActive(false);
+                return false;
+            }
+            if (overlay == null)
+            {
+                var go = new GameObject(OverlayName, typeof(RectTransform), typeof(Image));
+                var rt = (RectTransform)go.transform;
+                rt.SetParent(portrait.transform, false);
+                rt.anchorMin = new Vector2(-PadX, -PadY);
+                rt.anchorMax = new Vector2(1 + PadX, 1 + PadY);
+                rt.offsetMin = Vector2.zero;
+                rt.offsetMax = Vector2.zero;
+                overlay = go.GetComponent<Image>();
+                overlay.raycastTarget = false;
+            }
+            overlay.sprite = art;
+            overlay.gameObject.SetActive(true);
+            return true;
+        }
+    }
+
     // The placeholder "moving portrait": a slow breathing scale plus a soft brightness shimmer.
     public class PortraitAnimator : MonoBehaviour
     {

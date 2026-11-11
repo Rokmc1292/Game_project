@@ -542,8 +542,12 @@ namespace LiarsBatting.Presentation
 
             _nicknameText.text = profile.Nickname;
             _titleText.text = RewardCatalog.TitleText(p.Title);
-            _bigPortraitFrame.effectColor = TintOf(RewardCatalog.Find(p.Frame), Brass);
-            _bigPortraitFrame.effectDistance = p.Frame == RewardCatalog.NoFrame ? new Vector2(2f, -2f) : new Vector2(4f, -4f);
+            // Frame art goes over the portrait itself; the box keeps its thin brass edge. A frame
+            // without art falls back to colouring that edge.
+            bool frameArt = PortraitFrame.Apply(_bigPortrait, p.Frame);
+            bool tinted = !frameArt && p.Frame != RewardCatalog.NoFrame;
+            _bigPortraitFrame.effectColor = tinted ? TintOf(RewardCatalog.Find(p.Frame), Brass) : Brass;
+            _bigPortraitFrame.effectDistance = tinted ? new Vector2(4f, -4f) : new Vector2(2f, -2f);
 
             bool maxed = p.Level >= LevelTable.MaxPlayerLevel;
             int need = LevelTable.PlayerXpToNext(p.Level);

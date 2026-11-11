@@ -13,7 +13,8 @@ public class LiarsBetImportSettings : AssetPostprocessor
         bool isHud = assetPath.Contains("/Resources/Hud/") || assetPath.Contains("/Resources/Logo/");   // same uncompressed full-rect sprite treatment
         bool isChoice = assetPath.Contains("/Resources/ChoiceButtons/");
         bool isResult = assetPath.Contains("/Resources/Result/");
-        if (!isCard && !isBackground && !isButton && !isHud && !isChoice && !isResult) return;
+        bool isCosmetic = assetPath.Contains("/Resources/Cosmetics/");   // 보상 그림 (테두리·배경·카드 스킨)
+        if (!isCard && !isBackground && !isButton && !isHud && !isChoice && !isResult && !isCosmetic) return;
 
         var imp = (TextureImporter)assetImporter;
         imp.textureType = TextureImporterType.Sprite;
@@ -51,6 +52,15 @@ public class LiarsBetImportSettings : AssetPostprocessor
             bool panel = assetPath.Contains("choice_panel");
             imp.spritePixelsPerUnit = 200;
             imp.spriteBorder = panel ? new Vector4(40, 40, 40, 40) : new Vector4(26, 26, 26, 26);
+            imp.textureCompression = TextureImporterCompression.Uncompressed;
+            var settings = new TextureImporterSettings();
+            imp.ReadTextureSettings(settings);
+            settings.spriteMeshType = SpriteMeshType.FullRect;
+            imp.SetTextureSettings(settings);
+        }
+        else if (isCosmetic && assetPath.Contains("/frame_"))
+        {
+            // 초상화 테두리: 가는 금속 띠라 압축하면 뭉개지므로 압축 없이 사각형 메시로.
             imp.textureCompression = TextureImporterCompression.Uncompressed;
             var settings = new TextureImporterSettings();
             imp.ReadTextureSettings(settings);
