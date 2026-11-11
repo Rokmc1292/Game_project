@@ -68,6 +68,11 @@ namespace LiarsBatting.Progression
             }
         }
 
+        // False for a surrender before LevelTable.MinSurrenderSecondsForXp: such a match earns no XP
+        // and advances no challenge (the win/loss record still counts it).
+        public static bool EarnsProgress(MatchStats s) =>
+            !(s.Surrendered && s.DurationSeconds < LevelTable.MinSurrenderSecondsForXp);
+
         public static MatchSettlement ApplyMatch(PlayerProgress p, MatchStats s, DateTime utcNow)
         {
             RollPeriods(p, utcNow);

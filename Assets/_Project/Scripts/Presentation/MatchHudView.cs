@@ -43,6 +43,17 @@ namespace LiarsBatting.Presentation
         public readonly LieTokenView LieTokens;
 
         private readonly Text _turnLabel;
+        private readonly Text _elapsedLabel;
+        private int _shownElapsed = -1;
+
+        // Whole seconds since the match started, as "경기 시간 mm:ss".
+        public void SetElapsed(float seconds)
+        {
+            int s = Mathf.Max(0, Mathf.FloorToInt(seconds));
+            if (s == _shownElapsed) return;
+            _shownElapsed = s;
+            _elapsedLabel.text = $"경기 시간 {s / 60:00}:{s % 60:00}";
+        }
 
         public MatchHudView(Transform matchRoot, MonoBehaviour host)
         {
@@ -66,6 +77,12 @@ namespace LiarsBatting.Presentation
             GuessSlotsHolder = NewRect("GuessSlots");
             Place(GuessSlotsHolder, 464, 256, 352, 106);
             Label("제출할 숫자", 464, 366, 352, 18, 12, UITheme.Muted, TextAnchor.MiddleCenter);
+
+            // Total time this match has been running, just above the hourglass.
+            _elapsedLabel = Label("", 50, 56, 184, 34, 18, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Bold);
+            var elapsedShadow = _elapsedLabel.gameObject.AddComponent<Shadow>();
+            elapsedShadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
+            elapsedShadow.effectDistance = new Vector2(1.5f, -2f);
 
             Hourglass = new HourglassTimerView(Stage);
             Place(Hourglass.Root, 70, 96, 144, 256);

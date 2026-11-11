@@ -123,6 +123,8 @@ namespace LiarsBatting.Presentation
         private MatchStats _stats = new MatchStats();   // what I did this match, for XP and challenges
         private bool _lastDefenseWasLie;                // my most recent report used a LIE TOKEN
         private bool _nextOnlineTurnExtra;              // online: my next attack turn is a kept (Warrior) turn
+        private float _matchStartTime;                  // Time.unscaledTime when the match screen opened
+        private bool _matchClockRunning;
         private GameObject _soundSettings;
         private Slider _musicSlider;
         private Slider _effectsSlider;
@@ -167,6 +169,23 @@ namespace LiarsBatting.Presentation
             // Label under the hourglass ("내 턴" / "상대 턴") follows the header text.
             if (_statusPanel != null && _headerText != null)
                 _statusPanel.SetTurnLabel(_headerText.text);
+            if (_matchClockRunning) _statusPanel.SetElapsed(Time.unscaledTime - _matchStartTime);
+        }
+
+        // The match clock above the hourglass: runs from the moment the match screen opens until
+        // the match ends (the final time stays on screen under the result popup).
+        private void StartMatchClock()
+        {
+            _matchStartTime = Time.unscaledTime;
+            _matchClockRunning = true;
+            _statusPanel.SetElapsed(0f);
+        }
+
+        private float StopMatchClock()
+        {
+            float elapsed = _matchClockRunning ? Time.unscaledTime - _matchStartTime : 0f;
+            _matchClockRunning = false;
+            return elapsed;
         }
 
         // ---------- layout ----------
@@ -1099,10 +1118,14 @@ namespace LiarsBatting.Presentation
             stats.Won = won;
             stats.MyDigitsRevealed = 4 - HiddenCount(_state.PlayerRevealed);
             stats.OpponentDigitsRevealed = 4 - HiddenCount(_state.AiRevealed);
+            stats.DurationSeconds = StopMatchClock();
             _resultPopup.SetSummary("경험치 계산 중...");
             _profiles.SettleMatch(_nickname, stats, settlement =>
             {
-                _resultPopup.SetSummary(settlement.ToSummary());
+                // null = an early surrender: the result still counts, but nothing is earned.
+                _resultPopup.SetSummary(settlement != null
+                    ? settlement.ToSummary()
+                    : $"{LevelTable.MinSurrenderSecondsForXp / 60}분이 지나기 전에 항복해서 경험치를 받지 못했습니다.");
                 ApplyCosmetics(_profiles.Current);   // a new level may have changed nothing equipped, but keep it in sync
             });
         }
@@ -1597,6 +1620,7 @@ namespace LiarsBatting.Presentation
         private void Surrender()
         {
             const string message = ""; // my own surrender shows just the defeat title, no verdict line
+            _stats.Surrendered = true;
             if (_isOnlineMatch)
             {
                 _network.SubmitSurrender();
@@ -1788,6 +1812,7 @@ namespace LiarsBatting.Presentation
 
             GameAudio.Music("BGM_Match_Tension");
             ShowOnly(_matchScreen);
+            StartMatchClock();
             _surrenderButton.gameObject.SetActive(true);
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
@@ -1816,6 +1841,7 @@ namespace LiarsBatting.Presentation
 
             GameAudio.Music("BGM_Match_Tension");
             ShowOnly(_matchScreen);
+            StartMatchClock();
             _myHeroPortrait.SetHero(_state.PlayerHero);
             _opponentHeroPortrait.SetHero(_state.AiHero);
             _opponentHeroPortrait.SetSubtitle(_opponentTitle);

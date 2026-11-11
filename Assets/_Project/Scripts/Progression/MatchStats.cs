@@ -10,6 +10,8 @@ namespace LiarsBatting.Progression
         public bool Online;
         public bool Won;
         public bool WonByGuess;          // the win came from guessing the secret (not reveals/surrender)
+        public bool Surrendered;         // I pressed 항복
+        public float DurationSeconds;    // match clock at the end
 
         public int Guesses;              // full 4-digit guesses I submitted
         public int LiesTold;             // LIE TOKENs I spent on a report

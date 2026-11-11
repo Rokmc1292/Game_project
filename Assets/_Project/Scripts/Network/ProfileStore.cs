@@ -101,7 +101,10 @@ namespace LiarsBatting.Network
                 {
                     if (stats.Won) profile.Wins++; else profile.Losses++;
                 }
-                var settlement = ProgressionService.ApplyMatch(profile.Progress, stats, DateTime.UtcNow);
+                // null when an early surrender earns nothing (see ProgressionService.EarnsProgress).
+                var settlement = ProgressionService.EarnsProgress(stats)
+                    ? ProgressionService.ApplyMatch(profile.Progress, stats, DateTime.UtcNow)
+                    : null;
 
                 var fields = ProgressFields(profile);
                 fields["wins"] = FirestoreClient.IntField(profile.Wins);

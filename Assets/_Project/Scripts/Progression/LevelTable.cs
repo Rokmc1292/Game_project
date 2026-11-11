@@ -16,6 +16,10 @@ namespace LiarsBatting.Progression
             return won ? 60 : 30;
         }
 
+        // Surrendering before this many seconds of match time earns nothing (no XP, no challenge
+        // progress) -- otherwise quitting instantly would be the fastest way to farm.
+        public const int MinSurrenderSecondsForXp = 180;
+
         public const int DailyChallengeXp = 100;
         public const int WeeklyChallengeXp = 300;
 
