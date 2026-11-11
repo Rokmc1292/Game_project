@@ -29,6 +29,29 @@ namespace LiarsBatting.Network
 
         private static string PathOf(string nickname) => $"{Collection}/{nickname}";
 
+        // The nickname is the document id, so it can't contain '/' or be one of Firestore's
+        // reserved ids. Returns an error message, or null when the name is usable.
+        public static string NicknameProblem(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "닉네임을 입력해주세요.";
+            if (name.Contains("/") || name == "." || name == ".." || (name.StartsWith("__") && name.EndsWith("__")))
+                return "닉네임에 쓸 수 없는 문자가 있습니다. ('/', '.', '..' 등)";
+            return null;
+        }
+
+        // First registration: create players/{nickname} only if nobody has it yet.
+        public void Register(string nickname, Action onRegistered, Action<string> onError)
+        {
+            var fields = new JObject
+            {
+                ["nickname"] = FirestoreClient.StringField(nickname),
+                ["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            };
+            _db.CreateDocument(Collection, nickname, fields, onRegistered,
+                () => onError?.Invoke("이미 사용 중인 닉네임입니다."),
+                error => onError?.Invoke($"등록에 실패했습니다: {error}"));
+        }
+
         private static PlayerProfile Parse(string nickname, JObject doc)
         {
             var profile = new PlayerProfile { Nickname = nickname };
@@ -137,26 +160,27 @@ namespace LiarsBatting.Network
         // delete players/{oldName}, so the old nickname is freed instead of staying taken forever.
         public void Rename(string oldName, string newName, Action onRenamed, Action<string> onError)
         {
-            _db.GetDocument(PathOf(newName), existing =>
+            string problem = NicknameProblem(newName);
+            if (problem != null) { onError?.Invoke(problem); return; }
+
+            _db.GetDocument(PathOf(oldName), oldDoc =>
             {
-                if (existing != null) { onError?.Invoke("이미 사용 중인 닉네임입니다."); return; }
+                var fields = oldDoc?["fields"] as JObject ?? new JObject();
+                fields["nickname"] = FirestoreClient.StringField(newName);
+                fields["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
-                _db.GetDocument(PathOf(oldName), oldDoc =>
+                // Create-only: if someone else took the name a moment ago, this fails cleanly.
+                _db.CreateDocument(Collection, newName, fields, () =>
                 {
-                    var fields = oldDoc?["fields"] as JObject ?? new JObject();
-                    fields["nickname"] = FirestoreClient.StringField(newName);
-                    fields["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-
-                    _db.SetDocument(PathOf(newName), fields, () =>
-                    {
-                        if (Current != null && Current.Nickname == oldName) Current.Nickname = newName;
-                        // The new document is the one that matters; a failed delete only leaves the
-                        // old name reserved, so it is logged rather than reported as a failed rename.
-                        _db.DeleteDocument(PathOf(oldName), null,
-                            error => Debug.LogWarning($"이전 닉네임 문서 삭제 실패: {error}"));
-                        onRenamed?.Invoke();
-                    }, error => onError?.Invoke($"변경에 실패했습니다: {error}"));
-                }, error => onError?.Invoke($"서버 연결에 실패했습니다: {error}"));
+                    if (Current != null && Current.Nickname == oldName) Current.Nickname = newName;
+                    // The new document is the one that matters; a failed delete only leaves the
+                    // old name reserved, so it is logged rather than reported as a failed rename.
+                    _db.DeleteDocument(PathOf(oldName), null,
+                        error => Debug.LogWarning($"이전 닉네임 문서 삭제 실패: {error}"));
+                    onRenamed?.Invoke();
+                },
+                () => onError?.Invoke("이미 사용 중인 닉네임입니다."),
+                error => onError?.Invoke($"변경에 실패했습니다: {error}"));
             }, error => onError?.Invoke($"서버 연결에 실패했습니다: {error}"));
         }
     }

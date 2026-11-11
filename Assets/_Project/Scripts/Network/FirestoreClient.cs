@@ -58,6 +58,31 @@ namespace LiarsBatting.Network
             else onError?.Invoke(DescribeError(req));
         }
 
+        // Creates collection/{docId} only if no document has that id yet. When one already exists
+        // Firestore answers 409 ALREADY_EXISTS and onExists fires instead -- unlike a read-then-
+        // SetDocument, two clients racing for the same id can't both succeed (nicknames).
+        public void CreateDocument(string collection, string docId, JObject fields,
+            Action onSuccess, Action onExists, Action<string> onError)
+            => _host.StartCoroutine(CreateDocumentCo(collection, docId, fields, onSuccess, onExists, onError));
+
+        private IEnumerator CreateDocumentCo(string collection, string docId, JObject fields,
+            Action onSuccess, Action onExists, Action<string> onError)
+        {
+            string url = $"{FirebaseConfig.BaseUrl}/{collection}?documentId={UnityWebRequest.EscapeURL(docId)}&key={FirebaseConfig.ApiKey}";
+            var body = new JObject { ["fields"] = fields };
+            byte[] bodyBytes = Encoding.UTF8.GetBytes(body.ToString());
+
+            using var req = new UnityWebRequest(url, "POST");
+            req.uploadHandler = new UploadHandlerRaw(bodyBytes);
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            yield return req.SendWebRequest();
+
+            if (req.result == UnityWebRequest.Result.Success) onSuccess?.Invoke();
+            else if (req.responseCode == 409) onExists?.Invoke();
+            else onError?.Invoke(DescribeError(req));
+        }
+
         // Updates ONLY the named fields, leaving everything else in the document
         // untouched (and creates the document if it doesn't exist yet). Unlike
         // SetDocument's full replace, two clients can safely patch DIFFERENT

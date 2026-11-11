@@ -34,6 +34,7 @@ namespace LiarsBatting.Presentation
         private const float GuessSeconds = 30f;
         private const float DefendChoiceSeconds = 20f;
         private const float TrustChoiceSeconds = 20f;
+        private const float RogueAnswerTimeoutSeconds = 10f;   // online: wait for the opponent's insight answer
 
         // Single-player pacing: short beats so the opponent doesn't answer / attack instantly.
         private const float AiJudgeDelaySeconds = 1.2f;       // opponent "judging" my guess
@@ -301,9 +302,10 @@ namespace LiarsBatting.Presentation
             confirmBtn = UiFactory.Button(buttonRow, "확인", UITheme.Accent, Color.white, () =>
             {
                 string name = input.text.Trim();
-                if (name.Length == 0)
+                string problem = ProfileStore.NicknameProblem(name);
+                if (problem != null)
                 {
-                    ShowNicknameStatus(statusText, "닉네임을 입력해주세요.", isError: true);
+                    ShowNicknameStatus(statusText, problem, isError: true);
                     return;
                 }
                 if (name == _nickname)
@@ -315,23 +317,7 @@ namespace LiarsBatting.Presentation
 
                 confirmBtn.interactable = false;
                 ShowNicknameStatus(statusText, "확인하는 중...", isError: false);
-
-                _firestore.GetDocument($"players/{name}",
-                    existing =>
-                    {
-                        if (existing != null)
-                        {
-                            confirmBtn.interactable = true;
-                            ShowNicknameStatus(statusText, "이미 사용 중인 닉네임입니다.", isError: true);
-                            return;
-                        }
-                        RegisterNickname(name, confirmBtn, statusText);
-                    },
-                    error =>
-                    {
-                        confirmBtn.interactable = true;
-                        ShowNicknameStatus(statusText, $"서버 연결에 실패했습니다: {error}", isError: true);
-                    });
+                RegisterNickname(name, confirmBtn, statusText);
             }, 16);
             UiFactory.SetSize(confirmBtn, 220, 52);
             MenuButtonStyle.Apply(confirmBtn, primary: true);
@@ -347,13 +333,9 @@ namespace LiarsBatting.Presentation
 
         private void RegisterNickname(string name, Button confirmBtn, Text statusText)
         {
-            var fields = new JObject
-            {
-                ["nickname"] = FirestoreClient.StringField(name),
-                ["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-            };
-            _firestore.SetDocument($"players/{name}", fields,
-                onSuccess: () =>
+            // Create-only: if two players register the same name at the same moment, only one wins.
+            _profiles.Register(name,
+                onRegistered: () =>
                 {
                     _nickname = name;
                     PlayerPrefs.SetString(EffectiveNicknameKey(), _nickname);
@@ -363,7 +345,7 @@ namespace LiarsBatting.Presentation
                 onError: error =>
                 {
                     confirmBtn.interactable = true;
-                    ShowNicknameStatus(statusText, $"등록에 실패했습니다: {error}", isError: true);
+                    ShowNicknameStatus(statusText, error, isError: true);
                 });
         }
 
@@ -1048,12 +1030,23 @@ namespace LiarsBatting.Presentation
                     _stats.WonByGuess = true;
                     _stats.WonOnExtraTurn = _stats.OnExtraTurn;
                 }
-                string message = reason == NetworkMatchController.GameOverByFullReveal
-                    ? (won ? "상대의 비밀번호가 모두 공개되었다" : "내 비밀번호가 모두 공개되었다")
+                string message =
+                    reason == NetworkMatchController.GameOverByFullReveal
+                        ? (won ? "상대의 비밀번호가 모두 공개되었다" : "내 비밀번호가 모두 공개되었다")
+                    : reason == NetworkMatchController.GameOverByDisconnect
+                        ? (won ? "상대의 연결이 끊겼다" : "연결이 끊겨 패배했다")
                     : null;
                 EndOnlineGame(won, message);
             };
             _network.OnOpponentSurrendered += () => EndOnlineGame(true, "상대가 항복했다");
+
+            // The opponent closed the game or lost its connection: record it as my win (the
+            // "finished" write also tells them they lost if they come back).
+            _network.OnOpponentDisconnected += () =>
+            {
+                if (_matchOver) return;
+                _network.SubmitGameOver(_network.MySide, NetworkMatchController.GameOverByDisconnect);
+            };
 
             _network.OnError += error => ShowFriendStatus(error, true); // surfaces even off the friend screen; harmless no-op UI otherwise
 
@@ -2662,10 +2655,26 @@ namespace LiarsBatting.Presentation
                         handler = wasLie =>
                         {
                             _network.OnRogueAnswer -= handler;
+                            _timer.Stop();
                             ShowRogueResult(wasLie);
                         };
                         _network.OnRogueAnswer += handler;
                         _network.SubmitRogueQuery();
+                        _headerText.text = "진실 간파 — 상대의 응답을 확인하는 중...";
+
+                        // The opponent answers automatically, but only if its client is still
+                        // mid-defense and the query reached it. Without an answer the wait used to
+                        // hang forever: give the charge back and ask again instead.
+                        _timer.Start(RogueAnswerTimeoutSeconds, () =>
+                        {
+                            _network.OnRogueAnswer -= handler;
+                            if (_matchOver) return;
+                            _state.PlayerAbilityCharges++;
+                            _stats.AbilityUses--;
+                            RefreshMyAbilityUI();
+                            ShowTimeoutNotice("상대의 응답이 없어 진실 간파를 되돌립니다",
+                                () => PromptTrustOrChallenge(reported, null, onTrust, onChallenge));
+                        });
                     }
                 })));
             }

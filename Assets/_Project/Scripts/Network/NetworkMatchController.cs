@@ -37,6 +37,25 @@ namespace LiarsBatting.Network
         private Coroutine _pollRoutine;
         private long _lastSeq;
 
+        // ---- presence (disconnect detection) ----
+        // Each side writes a counter to its OWN small document (matchPresence/{matchId}_{A|B}) every
+        // few seconds and reads the other side's. A counter that stops changing for long enough
+        // means the opponent closed the game or lost its connection. Separate documents (not the
+        // match doc) because the match doc is fully replaced on every turn write. Staleness is
+        // only judged while my own reads are succeeding, so my own outage isn't blamed on them.
+        private const float HeartbeatSeconds = 3f;
+        private const float DisconnectAfterSeconds = 30f;
+        private Coroutine _presenceRoutine;
+        private long _myBeat;
+        private long _lastOpponentBeat = -1;
+        private float _lastOpponentBeatAt;
+        private float _lastPresenceReadAt;
+        private bool _disconnectReported;
+
+        // The opponent stopped sending presence for DisconnectAfterSeconds.
+        public event Action OnOpponentDisconnected;
+        public const string GameOverByDisconnect = "disconnect";
+
         // Local mirror of the persistent (non-transient) parts of the document,
         // since every write replaces the whole thing.
         private string _heroA = "";
@@ -118,6 +137,9 @@ namespace LiarsBatting.Network
         public void Start()
         {
             _pollRoutine = _host.StartCoroutine(PollLoop());
+            _lastOpponentBeatAt = Time.realtimeSinceStartup;   // grace period while they load in
+            _lastPresenceReadAt = Time.realtimeSinceStartup;
+            _presenceRoutine = _host.StartCoroutine(PresenceLoop());
         }
 
         public void Stop()
@@ -126,6 +148,46 @@ namespace LiarsBatting.Network
             {
                 _host.StopCoroutine(_pollRoutine);
                 _pollRoutine = null;
+            }
+            if (_presenceRoutine != null)
+            {
+                _host.StopCoroutine(_presenceRoutine);
+                _presenceRoutine = null;
+                _db.DeleteDocument(PresencePath(MySide), null, null);   // tidy up; nothing depends on it
+            }
+        }
+
+        private string PresencePath(MatchSide side) => $"matchPresence/{_matchId}_{SideKey(side)}";
+
+        private IEnumerator PresenceLoop()
+        {
+            while (true)
+            {
+                _myBeat++;
+                _db.SetDocument(PresencePath(MySide),
+                    new JObject { ["beat"] = FirestoreClient.IntField(_myBeat) }, null, null);
+
+                _db.GetDocument(PresencePath(OtherSide(MySide)), doc =>
+                {
+                    float now = Time.realtimeSinceStartup;
+                    _lastPresenceReadAt = now;
+                    long beat = FirestoreClient.ReadInt(doc, "beat", -1);
+                    if (doc != null && beat != _lastOpponentBeat)
+                    {
+                        _lastOpponentBeat = beat;
+                        _lastOpponentBeatAt = now;
+                    }
+                }, _ => { });
+
+                float t = Time.realtimeSinceStartup;
+                bool myReadsWork = t - _lastPresenceReadAt < HeartbeatSeconds * 3;
+                if (!_disconnectReported && myReadsWork && t - _lastOpponentBeatAt > DisconnectAfterSeconds)
+                {
+                    _disconnectReported = true;
+                    OnOpponentDisconnected?.Invoke();
+                }
+
+                yield return new WaitForSecondsRealtime(HeartbeatSeconds);
             }
         }
 
