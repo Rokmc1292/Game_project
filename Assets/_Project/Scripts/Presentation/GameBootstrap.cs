@@ -111,6 +111,9 @@ namespace LiarsBatting.Presentation
         private Button _headerSettingsButton;
         private ResultPopupView _resultPopup;
         private Text _menuGreetingText;
+        private Image _menuProfileIcon;
+        private ProfileStore _profiles;
+        private ProfileScreen _profileScreen;
         private GameObject _soundSettings;
         private Slider _musicSlider;
         private Slider _effectsSlider;
@@ -129,10 +132,12 @@ namespace LiarsBatting.Presentation
             rootImage.sprite = CardArt.Background();   // underground table background
             rootImage.raycastTarget = false;
             _firestore = new FirestoreClient(this);
+            _profiles = new ProfileStore(_firestore);
 
             BuildHeader(root);
             BuildNicknameScreen(root);
             BuildMainMenuScreen(root);
+            BuildProfileScreen(root);
             BuildRandomMatchScreen(root);
             BuildFriendMatchScreen(root);
             BuildHeroSelectScreen(root);
@@ -358,12 +363,22 @@ namespace LiarsBatting.Presentation
             // The menu sits below the logo.
             var centered = UiFactory.VerticalGroup(_mainMenuScreen.transform, "Centered", spacing: 14,
                 padding: new RectOffset(40, 40, 24, 16));
-            centered.anchorMin = new Vector2(0.28f, 0.06f);
+            centered.anchorMin = new Vector2(0.28f, 0.01f);
             centered.anchorMax = new Vector2(0.72f, 0.62f);
             centered.offsetMin = Vector2.zero;
             centered.offsetMax = Vector2.zero;
 
-            _menuGreetingText = UiFactory.Text(centered, "", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            // Greeting row: my profile picture next to "닉네임님, 환영합니다".
+            var greetingRow = UiFactory.HorizontalGroup(centered, "Greeting", spacing: 10, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(greetingRow, 48);
+            var iconGo = new GameObject("ProfileIcon", typeof(RectTransform), typeof(Image));
+            iconGo.transform.SetParent(greetingRow, false);
+            UiFactory.SetSize(iconGo.transform, 40, 48);
+            _menuProfileIcon = iconGo.GetComponent<Image>();
+            _menuProfileIcon.preserveAspect = true;
+            _menuProfileIcon.raycastTarget = false;
+            _menuProfileIcon.sprite = ProfileScreen.PortraitOf(HeroId.Hunter);
+            _menuGreetingText = UiFactory.Text(greetingRow, "", 20, UITheme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
             UiFactory.Text(centered, "대전 방식을 선택하세요", 13, UITheme.Muted, TextAnchor.MiddleCenter);
 
             var aiBtn = UiFactory.Button(centered, "AI 매칭", UITheme.Accent, Color.white, StartAiMatch, 16);
@@ -380,8 +395,10 @@ namespace LiarsBatting.Presentation
             UiFactory.SetHeight(friendBtn, 52);
             MenuButtonStyle.Apply(friendBtn, primary: false);
 
-            var resetBtn = UiFactory.Button(centered, "닉네임 변경", UITheme.Bg, UITheme.Muted, ShowNicknameScreen, 12);
-            UiFactory.SetHeight(resetBtn, 30);
+            // Nickname changes now live inside the profile screen.
+            var profileBtn = UiFactory.Button(centered, "프로필", UITheme.Surface2, UITheme.Ink, ShowProfileScreen, 14);
+            UiFactory.SetHeight(profileBtn, 40);
+            MenuButtonStyle.Apply(profileBtn, primary: false);
 
             var settingsBtn = UiFactory.Button(_mainMenuScreen.transform, "설정", UITheme.Surface2, UITheme.Ink, ShowSoundSettings, 14);
             settingsBtn.gameObject.name = "SoundSettingsButton";
@@ -1019,6 +1036,7 @@ namespace LiarsBatting.Presentation
         {
             if (_matchOver) return;   // the loser's own write, the winner's poll and a local check can all report it
             _matchOver = true;
+            _profiles.RecordHumanMatch(_nickname, won);   // record against people (AI matches never count)
             _timer.Stop();
             _network?.Stop();
             _matchSession++;
@@ -1477,6 +1495,7 @@ namespace LiarsBatting.Presentation
                 CloseSoundSettings();
             _nicknameScreen.SetActive(target == _nicknameScreen);
             _mainMenuScreen.SetActive(target == _mainMenuScreen);
+            _profileScreen.Root.SetActive(target == _profileScreen.Root);
             _randomMatchScreen.SetActive(target == _randomMatchScreen);
             _friendMatchScreen.SetActive(target == _friendMatchScreen);
             _heroSelectScreen.SetActive(target == _heroSelectScreen);
@@ -1549,6 +1568,78 @@ namespace LiarsBatting.Presentation
             _headerText.text = "라이어스 배팅";
             _tokenText.text = "";
             StartGlobalInviteWatch();
+            RefreshMenuProfileIcon();
+        }
+
+        // ---------- profile ----------
+
+        private void BuildProfileScreen(Transform root)
+        {
+            _profileScreen = new ProfileScreen(root)
+            {
+                OnBack = ShowMainMenu,
+                OnIconPicked = OnProfileIconPicked,
+                OnRenameRequested = OnProfileRenameRequested
+            };
+        }
+
+        private void RefreshMenuProfileIcon()
+        {
+            string nickname = _nickname;
+            _profiles.Load(nickname, profile =>
+            {
+                if (nickname != _nickname) return;   // renamed meanwhile
+                _menuProfileIcon.sprite = ProfileScreen.PortraitOf(profile.ProfileIcon);
+            }, error => Debug.LogWarning($"프로필 불러오기 실패: {error}"));
+        }
+
+        private void ShowProfileScreen()
+        {
+            ShowOnly(_profileScreen.Root);
+            _headerText.text = "프로필";
+            _tokenText.text = "";
+            _profileScreen.ShowLoading(_nickname);
+            _profiles.Load(_nickname, _profileScreen.ShowProfile,
+                error => _profileScreen.SetStatus($"프로필을 불러오지 못했습니다: {error}", true));
+        }
+
+        private void OnProfileIconPicked(HeroId hero)
+        {
+            _profileScreen.SetInteractable(false);
+            _profiles.SaveProfileIcon(_nickname, hero, () =>
+            {
+                _profileScreen.SetSelectedIcon(hero);
+                _profileScreen.SetInteractable(true);
+                _profileScreen.SetStatus("프로필 사진을 바꿨습니다.", false);
+                _menuProfileIcon.sprite = ProfileScreen.PortraitOf(hero);
+            }, error =>
+            {
+                _profileScreen.SetInteractable(true);
+                _profileScreen.SetStatus($"저장에 실패했습니다: {error}", true);
+            });
+        }
+
+        private void OnProfileRenameRequested(string newName)
+        {
+            if (newName == _nickname) { _profileScreen.SetStatus("지금 쓰고 있는 닉네임입니다.", true); return; }
+
+            _profileScreen.SetInteractable(false);
+            _profileScreen.SetStatus("변경하는 중...", false);
+            _profiles.Rename(_nickname, newName, () =>
+            {
+                _nickname = newName;
+                PlayerPrefs.SetString(EffectiveNicknameKey(), _nickname);
+                PlayerPrefs.Save();
+                StartGlobalInviteWatch();   // invites now arrive under the new name
+                _profileScreen.ClearRenameInput();
+                if (_profiles.Current != null) _profileScreen.ShowProfile(_profiles.Current);
+                _profileScreen.SetInteractable(true);
+                _profileScreen.SetStatus("닉네임을 바꿨습니다.", false);
+            }, error =>
+            {
+                _profileScreen.SetInteractable(true);
+                _profileScreen.SetStatus(error, true);
+            });
         }
 
         // AI-mode entry point (the "AI 매칭" button). Picks the AI's hero and
