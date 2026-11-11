@@ -90,6 +90,11 @@ namespace LiarsBatting.Presentation
         private MatchHudView _statusPanel;
         private ChoiceOverlayView _choiceOverlay;
         private bool _awaitingMyChallengeOutcome;   // online: I challenged the opponent's answer and the verdict isn't in yet
+        private bool _matchOver;                    // a result popup has been shown for this match: ignore anything that arrives later
+        private bool _defendingNow;                 // online: I'm in the middle of answering the opponent's guess
+        private string _pendingNotice;              // online: banner to show (before the turn banner) once the turn change is processed
+        private float _pendingNoticeHold;
+        private int _pendingNoticeDigit = -1;
         private CountdownTimerView _timer;
         private HeroPortraitView _myHeroPortrait;
         private HeroPortraitView _opponentHeroPortrait;
@@ -99,6 +104,7 @@ namespace LiarsBatting.Presentation
         private GameObject _turnAnnouncementRoot;
         private Image _turnAnnouncementBackdrop;
         private Text _turnAnnouncementText;
+        private Image _turnAnnouncementCard;
         private Coroutine _turnAnnouncementRoutine;
         private Text _tokenText;
         private Button _surrenderButton;
@@ -333,10 +339,27 @@ namespace LiarsBatting.Presentation
         {
             _mainMenuScreen = BuildFullScreenContainer(root, "MainMenuScreen");
 
+            // The wordmark above the menu (Resources/Logo). If the art isn't there -- e.g. Unity hasn't
+            // imported it yet -- the space is simply left empty rather than showing a white box.
+            var logoGo = new GameObject("Logo", typeof(RectTransform), typeof(Image));
+            var logoRt = (RectTransform)logoGo.transform;
+            logoRt.SetParent(_mainMenuScreen.transform, false);
+            logoRt.anchorMin = new Vector2(0.5f, 1f);
+            logoRt.anchorMax = new Vector2(0.5f, 1f);
+            logoRt.pivot = new Vector2(0.5f, 1f);
+            logoRt.anchoredPosition = new Vector2(0f, -24f);
+            logoRt.sizeDelta = new Vector2(600f, 212f);   // the art is 1429x503
+            var logoImage = logoGo.GetComponent<Image>();
+            logoImage.sprite = Resources.Load<Sprite>("Logo/liars_batting_logo");
+            logoImage.preserveAspect = true;
+            logoImage.raycastTarget = false;
+            logoImage.enabled = logoImage.sprite != null;
+
+            // The menu sits below the logo.
             var centered = UiFactory.VerticalGroup(_mainMenuScreen.transform, "Centered", spacing: 14,
-                padding: new RectOffset(40, 40, 40, 40));
-            centered.anchorMin = new Vector2(0.28f, 0.22f);
-            centered.anchorMax = new Vector2(0.72f, 0.78f);
+                padding: new RectOffset(40, 40, 24, 16));
+            centered.anchorMin = new Vector2(0.28f, 0.06f);
+            centered.anchorMax = new Vector2(0.72f, 0.62f);
             centered.offsetMin = Vector2.zero;
             centered.offsetMax = Vector2.zero;
 
@@ -694,6 +717,11 @@ namespace LiarsBatting.Presentation
                 WireNetworkEvents();
                 _network.Start();
                 _isOnlineMatch = true;
+                _matchOver = false;
+                _defendingNow = false;
+                _awaitingMyChallengeOutcome = false;
+                _pendingNotice = null;
+                _pendingNoticeDigit = -1;
                 _state = new GameState();
 
                 GameAudio.Play("SFX_Match_Found");
@@ -717,26 +745,36 @@ namespace LiarsBatting.Presentation
             {
                 _surrenderButton.gameObject.SetActive(true);
                 RefreshTokenHeader();
-                UpdateOnlineTurnUI();
+                // Player A always moves first (the controller's turn starts on A).
+                bool iAmFirst = _network.CurrentAttacker == _network.MySide;
+                ShowFirstTurnBanner(iAmFirst, UpdateOnlineTurnUI);
             };
 
             _network.OnOpponentGuess += guess =>
             {
+                if (_matchOver) return;
                 var trueResult = Judge.Evaluate(_state.PlayerSecret, guess);
                 bool canLieAboutWin = _state.PlayerHero == HeroId.Hunter;
+                _defendingNow = true;
                 PromptDefenseChoice(guess, trueResult, _state.PlayerLieTokens, canLieAboutWin, (reported, usedToken) =>
                 {
+                    _defendingNow = false;
                     if (usedToken) { _state.PlayerLieTokens--; RefreshTokenHeader(); }
                     bool wasLie = !reported.Equals(trueResult);
                     _statusPanel.OpponentAttackHistory.AddRow(guess, reported, wasLie);
+                    // A reported win ends the match right here: the controller fires OnGameOver for me too,
+                    // since my own "finished" write never comes back through my own poll.
                     _network.SubmitDefenseResponse(trueResult, reported);
+                    if (_matchOver) return;
                     _headerText.text = $"{_network.OpponentNickname}님의 판단을 기다리는 중...";
                     _attackPicker.SetInteractable(false);
+                    _timer.StartSpectating(TrustChoiceSeconds);   // the opponent's trust-or-challenge clock
                 });
             };
 
             _network.OnOpponentResponse += reported =>
             {
+                if (_matchOver) return;
                 _statusPanel.MyAttackHistory.AddRow(_myLastOnlineGuess, reported, false, revealLie: false);
                 PromptTrustOrChallenge(reported, null,
                     onTrust: () =>
@@ -754,6 +792,8 @@ namespace LiarsBatting.Presentation
 
             _network.OnChallengeNeedsMyJudgement += () =>
             {
+                if (_matchOver) return;
+                _timer.Stop();   // the opponent decided: its clock on my screen is done
                 bool wasLie = _network.DidIActuallyLie();
                 GameAudio.Play("SFX_Challenge_Doubt");
                 GameAudio.Play(wasLie ? "SFX_Reveal_Punished" : "SFX_Reveal_Busted");
@@ -762,38 +802,91 @@ namespace LiarsBatting.Presentation
 
             _network.OnIMustReveal += () =>
             {
+                if (_matchOver) return;
+                _timer.Stop();
+                string message;
                 if (_awaitingMyChallengeOutcome)
                 {
                     // I challenged but the opponent told the truth -- I'm the one who has to open a digit.
                     _awaitingMyChallengeOutcome = false;
                     _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
                     GameAudio.Play("SFX_Reveal_Punished");
+                    message = "헛다리! 상대는 진실을 말했습니다.\n벌칙으로 내 비밀번호 한 자리를 공개하세요.";
                 }
-                PromptPlayerRevealChoice("비밀번호 한 자리를 공개해야 합니다.", index =>
+                else
+                {
+                    // The opponent challenged and I had lied: caught.
+                    message = "상대가 당신의 거짓말을 눈치챘습니다!\n벌칙으로 내 비밀번호 한 자리를 공개하세요.";
+                }
+                PromptPlayerRevealChoice(message, index =>
                 {
                     if (index < 0) { UpdateOnlineTurnUI(); return; }
                     _network.SubmitReveal(index, _state.PlayerSecret[index]);
+                    if (AllRevealed(_state.PlayerRevealed))
+                    {
+                        // That was my last hidden digit: the opponent now knows my whole secret.
+                        _network.SubmitGameOver(_network.OpponentSide, NetworkMatchController.GameOverByFullReveal);
+                        return;
+                    }
                     UpdateOnlineTurnUI();
                 });
             };
 
             _network.OnOpponentRevealed += (side, index, digit) =>
             {
-                if (_awaitingMyChallengeOutcome)
-                {
-                    // I challenged and the opponent now has to open a digit: their answer was a lie.
-                    _awaitingMyChallengeOutcome = false;
-                    _statusPanel.MyAttackHistory.MarkLastRowAsLie();
-                    GameAudio.Play("SFX_Reveal_Busted");
-                }
+                if (_matchOver || index < 0 || index > 3) return;
                 _state.AiSecret[index] = digit;
                 _state.AiRevealed[index] = true;
                 RefreshRevealedRows();
+
+                bool iChallenged = _awaitingMyChallengeOutcome;
+                _awaitingMyChallengeOutcome = false;
+                if (iChallenged)
+                {
+                    // I challenged and the opponent now has to open a digit: their answer was a lie.
+                    _statusPanel.MyAttackHistory.MarkLastRowAsLie();
+                    GameAudio.Play("SFX_Reveal_Busted");
+                }
+
+                if (AllRevealed(_state.AiRevealed))
+                {
+                    EndOnlineGame(true, "상대의 비밀번호가 모두 공개되었다");
+                    return;
+                }
+
+                // The turn change arrives in the same poll; the banner is shown ahead of it.
+                QueueNotice(iChallenged
+                        ? RevealNoticeText("적중!", "상대가 거짓말을 했습니다", index)
+                        : RevealNoticeText("상대의 헛다리!", "상대가 당신을 의심했지만 틀렸습니다", index),
+                    RevealNoticeHoldSeconds, digit);
+            };
+
+            _network.OnOpponentTrusted += () =>
+            {
+                if (_matchOver) return;
+                GameAudio.Play("SFX_Trust_Accept");
+                QueueNotice("<size=48>상대가 당신의 대답을 믿었습니다</size>", NoticeHoldSeconds);
+            };
+
+            _network.OnOpponentWizardReveal += (index, digit) =>
+            {
+                if (_matchOver || index < 0 || index > 3) return;
+                _state.AiSecret[index] = digit;
+                _state.AiRevealed[index] = true;
+                RefreshRevealedRows();
+                if (AllRevealed(_state.AiRevealed)) EndOnlineGame(true, "상대의 비밀번호가 모두 공개되었다");
             };
 
             _network.OnTurnChanged += _ => UpdateOnlineTurnUI();
 
-            _network.OnGameOver += winner => EndOnlineGame(winner == _network.MySide);
+            _network.OnGameOver += (winner, reason) =>
+            {
+                bool won = winner == _network.MySide;
+                string message = reason == NetworkMatchController.GameOverByFullReveal
+                    ? (won ? "상대의 비밀번호가 모두 공개되었다" : "내 비밀번호가 모두 공개되었다")
+                    : null;
+                EndOnlineGame(won, message);
+            };
             _network.OnOpponentSurrendered += () => EndOnlineGame(true, "상대가 항복했다");
 
             _network.OnError += error => ShowFriendStatus(error, true); // surfaces even off the friend screen; harmless no-op UI otherwise
@@ -808,6 +901,8 @@ namespace LiarsBatting.Presentation
             // position holds one specific digit, truthfully or not.
             _network.OnOpponentPriestQuery += (position, guessedDigit) =>
             {
+                if (_matchOver) return;
+                _timer.Stop();   // the opponent is done guessing; their clock on my screen is moot
                 PromptPriestDefenseChoice(position, guessedDigit, answer =>
                 {
                     _network.SubmitPriestAnswer(answer);
@@ -829,16 +924,35 @@ namespace LiarsBatting.Presentation
             // still-hidden digits back to them.
             _network.OnMustRevealForWizard += () =>
             {
+                if (_matchOver) return;
                 int idx = PickRandomOpenIndex(_state.PlayerRevealed);
                 if (idx < 0) return;
                 _state.PlayerRevealed[idx] = true;
                 RefreshRevealedRows();
                 _network.SubmitWizardResponse(idx, _state.PlayerSecret[idx]);
+                // Their ability just opened my last hidden digit: my whole secret is out.
+                if (AllRevealed(_state.PlayerRevealed))
+                    _network.SubmitGameOver(_network.OpponentSide, NetworkMatchController.GameOverByFullReveal);
             };
         }
 
         private void UpdateOnlineTurnUI()
         {
+            if (_matchOver) return;
+            _timer.Stop();
+
+            // A notice queued by this poll's trust / reveal event goes first; the turn banner follows.
+            if (_pendingNotice != null)
+            {
+                string notice = _pendingNotice;
+                float hold = _pendingNoticeHold;
+                int digit = _pendingNoticeDigit;
+                _pendingNotice = null;
+                _pendingNoticeDigit = -1;
+                ShowBanner(notice, hold, UpdateOnlineTurnUI, digit);
+                return;
+            }
+
             if (_network.CurrentAttacker == _network.MySide) BeginOnlineAttackTurn();
             else BeginOnlineWaitTurn();
         }
@@ -878,11 +992,14 @@ namespace LiarsBatting.Presentation
 
         private void BeginOnlineWaitTurnAfterAnnouncement()
         {
-            _timer.Stop();
             RefreshTokenHeader();
-            _headerText.text = $"{_network.OpponentNickname}님의 턴 — 대기 중";
             _attackPicker.SetInteractable(false);
             SetMyTurnActive(false);
+            // The opponent's guess can land while this banner is still up: don't disturb the clock of
+            // the answer I'm already giving.
+            if (_defendingNow) return;
+            _headerText.text = $"{_network.OpponentNickname}님의 턴 — 대기 중";
+            _timer.StartSpectating(GuessSeconds);   // the opponent's guessing clock, so I can see it run
         }
 
         private void OnOnlineGuessSubmitted(int[] guess)
@@ -895,20 +1012,25 @@ namespace LiarsBatting.Presentation
             bool keepTurn = _state.PlayerExtraTurnPending;
             _state.PlayerExtraTurnPending = false;
             _network.SubmitGuess(guess, keepTurn);
+            _timer.StartSpectating(DefendChoiceSeconds);   // the opponent's truth-or-lie clock
         }
 
         private void EndOnlineGame(bool won, string message = null)
         {
+            if (_matchOver) return;   // the loser's own write, the winner's poll and a local check can all report it
+            _matchOver = true;
             _timer.Stop();
             _network?.Stop();
             _matchSession++;
             CancelTurnAnnouncement();
             _surrenderButton.gameObject.SetActive(false);
             GameAudio.Music(won ? "BGM_Win_Stinger" : "BGM_Lose_Stinger", false);
-            // Online, the opponent's secret isn't known on a win, so only a defeat shows cards (my own secret).
+            // A win by guessing leaves the opponent's secret unknown here, so only show its cards when
+            // every digit has been opened; a defeat always shows my own secret.
+            int[] cards = won ? (AllRevealed(_state.AiRevealed) ? _state.AiSecret : null) : _state.PlayerSecret;
             _resultPopup.Show(won,
                 message ?? (won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
-                won ? null : _state.PlayerSecret);
+                cards);
         }
 
         // ---------- hero select ----------
@@ -1111,7 +1233,8 @@ namespace LiarsBatting.Presentation
             _timer.OnTick = (remaining, total) =>
             {
                 _statusPanel.Hourglass.SetRemaining(remaining, total);
-                _choiceOverlay?.SetCountdown(remaining);
+                // Only MY decisions get the popup countdown; the opponent's clock is hourglass-only.
+                if (!_timer.IsSpectating) _choiceOverlay?.SetCountdown(remaining);
             };
             _timer.OnStopped = () =>
             {
@@ -1162,6 +1285,9 @@ namespace LiarsBatting.Presentation
 
         private void UseWizardAbility()
         {
+            // Opening my own LAST hidden digit would lose me the match (every digit open = the other side
+            // knows my whole secret), so this is blocked -- the button is disabled in that state as well.
+            if (HiddenCount(_state.PlayerRevealed) <= 1) return;
             GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
             _state.PlayerAbilityCharges--;
             int myIdx = PickRandomOpenIndex(_state.PlayerRevealed);
@@ -1180,6 +1306,7 @@ namespace LiarsBatting.Presentation
             }
             RefreshRevealedRows();
             RefreshMyAbilityUI();
+            if (!_isOnlineMatch) EndAiMatchIfAiFullyRevealed();   // the ability opened the AI's last hidden digit
         }
 
         // The ability button under my portrait: active heroes get "능력 사용 (남은/전체)",
@@ -1221,6 +1348,13 @@ namespace LiarsBatting.Presentation
                     // Nothing to restore while both LIE TOKENs are still there.
                     if (_state.PlayerLieTokens >= GameState.MaxLieTokens)
                         _myHeroPortrait.SetAbilityButton("토큰 가득 참", false, null);
+                    else
+                        _myHeroPortrait.SetAbilityButton(label, true, OnMyAbilityClicked);
+                    break;
+                case HeroId.Wizard:
+                    // The ability opens one of MY hidden digits too: not when only one is left.
+                    if (HiddenCount(_state.PlayerRevealed) <= 1)
+                        _myHeroPortrait.SetAbilityButton("공개할 자리 부족", false, null);
                     else
                         _myHeroPortrait.SetAbilityButton(label, true, OnMyAbilityClicked);
                     break;
@@ -1424,6 +1558,7 @@ namespace LiarsBatting.Presentation
         {
             GameAudio.Play("SFX_Match_Found");
             _isOnlineMatch = false;
+            _matchOver = false;
             _inviteWatcher?.StopPolling();
 
             _state = new GameState();
@@ -1457,8 +1592,11 @@ namespace LiarsBatting.Presentation
             RefreshRevealedRows();
 
             bool aiFirst = UnityEngine.Random.value > 0.5f;
-            if (aiFirst) BeginAiAttackTurn();
-            else BeginPlayerAttackTurn();
+            ShowFirstTurnBanner(!aiFirst, () =>
+            {
+                if (aiFirst) BeginAiAttackTurn();
+                else BeginPlayerAttackTurn();
+            });
         }
 
         private void OnOnlineSecretChosen(int[] playerSecret)
@@ -1510,11 +1648,50 @@ namespace LiarsBatting.Presentation
 
         private const float TurnAnnouncementHoldSeconds = 0.55f;
         private const float TimeoutNoticeHoldSeconds = 1.1f;
+        private const float FirstTurnBannerHoldSeconds = 1.6f;
+        private const float NoticeHoldSeconds = 1.5f;          // "the opponent trusted you" and the like
+        private const float RevealNoticeHoldSeconds = 2.4f;    // a digit was opened: long enough to read it and see the card
 
         private void ShowTurnAnnouncement(string message, Action onComplete)
         {
             GameAudio.Play(message == "나의 턴" ? "SFX_Turn_Start_My" : "SFX_Turn_Start_Opponent");
             ShowBanner(message, TurnAnnouncementHoldSeconds, onComplete);
+        }
+
+        // Who moves first, big and in the middle of the screen, right as the match starts.
+        private void ShowFirstTurnBanner(bool iAmFirst, Action onComplete)
+        {
+            string headline = iAmFirst ? "선공" : "후공";
+            string detail = iAmFirst ? "내가 먼저 상대의 비밀번호를 추리합니다" : "상대가 먼저 나의 비밀번호를 추리합니다";
+            ShowBanner($"<size=110>{headline}</size>\n<size=34>{detail}</size>", FirstTurnBannerHoldSeconds, onComplete);
+        }
+
+        // Text for "a digit of the opponent's secret was just opened" -- the card itself is drawn
+        // under it by the banner (see ShowBanner's cardDigit).
+        private static string RevealNoticeText(string headline, string detail, int index) =>
+            $"<size=64>{headline}</size>\n<size=30>{detail}</size>\n<size=26>상대 비밀번호 {index + 1}번째 자리가 공개되었습니다</size>";
+
+        // Online, the notice has to wait for the turn change that arrives in the same poll
+        // (OnOpponentTrusted / OnOpponentRevealed fire right before OnTurnChanged): it's shown by
+        // UpdateOnlineTurnUI, ahead of the turn banner, instead of being cut off by it.
+        private void QueueNotice(string text, float holdSeconds, int cardDigit = -1)
+        {
+            _pendingNotice = text;
+            _pendingNoticeHold = holdSeconds;
+            _pendingNoticeDigit = cardDigit;
+        }
+
+        private static bool AllRevealed(bool[] revealed)
+        {
+            foreach (bool r in revealed) if (!r) return false;
+            return true;
+        }
+
+        private static int HiddenCount(bool[] revealed)
+        {
+            int n = 0;
+            foreach (bool r in revealed) if (!r) n++;
+            return n;
         }
 
         // Shown when a timed decision runs out, so the player sees what was picked
@@ -1526,7 +1703,8 @@ namespace LiarsBatting.Presentation
             ShowBanner($"시간 초과!\n<size=24>{whatHappened}</size>", TimeoutNoticeHoldSeconds, onComplete);
         }
 
-        private void ShowBanner(string message, float holdSeconds, Action onComplete)
+        // cardDigit >= 0 draws that card under the text (a digit that was just opened).
+        private void ShowBanner(string message, float holdSeconds, Action onComplete, int cardDigit = -1)
         {
             if (_turnAnnouncementRoot == null)
             {
@@ -1537,11 +1715,35 @@ namespace LiarsBatting.Presentation
                 _turnAnnouncementBackdrop = _turnAnnouncementRoot.GetComponent<Image>();
                 _turnAnnouncementBackdrop.color = new Color(0f, 0f, 0f, 0f);
                 _turnAnnouncementText = UiFactory.Text(root, "", 36, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold);
+                _turnAnnouncementText.raycastTarget = false;
                 UiFactory.StretchToFillParent((RectTransform)_turnAnnouncementText.transform);
+
+                var cardGo = new GameObject("RevealCard", typeof(RectTransform), typeof(Image));
+                var cardRt = (RectTransform)cardGo.transform;
+                cardRt.SetParent(root, false);
+                cardRt.anchorMin = new Vector2(0.5f, 0.3f);
+                cardRt.anchorMax = new Vector2(0.5f, 0.3f);
+                cardRt.pivot = new Vector2(0.5f, 0.5f);
+                cardRt.sizeDelta = new Vector2(120f, 168f);   // card art is 5:7
+                _turnAnnouncementCard = cardGo.GetComponent<Image>();
+                _turnAnnouncementCard.preserveAspect = true;
+                _turnAnnouncementCard.raycastTarget = false;
+                cardGo.SetActive(false);
+
                 _turnAnnouncementRoot.SetActive(false);
             }
 
             if (_turnAnnouncementRoutine != null) StopCoroutine(_turnAnnouncementRoutine);
+
+            // With a card the text moves up to make room for it; without one it fills the screen.
+            var textRt = (RectTransform)_turnAnnouncementText.transform;
+            textRt.anchorMin = cardDigit >= 0 ? new Vector2(0f, 0.47f) : Vector2.zero;
+            textRt.anchorMax = cardDigit >= 0 ? new Vector2(1f, 0.92f) : Vector2.one;
+            textRt.offsetMin = Vector2.zero;
+            textRt.offsetMax = Vector2.zero;
+            if (cardDigit >= 0) _turnAnnouncementCard.sprite = CardArt.Digit(cardDigit);
+            _turnAnnouncementCard.gameObject.SetActive(cardDigit >= 0);
+
             _turnAnnouncementText.text = message;
             _turnAnnouncementRoot.SetActive(true);
             _turnAnnouncementRoot.transform.SetAsLastSibling();
@@ -1584,6 +1786,10 @@ namespace LiarsBatting.Presentation
             var textColor = _turnAnnouncementText.color;
             textColor.a = alpha;
             _turnAnnouncementText.color = textColor;
+
+            var cardColor = _turnAnnouncementCard.color;
+            cardColor.a = alpha;
+            _turnAnnouncementCard.color = cardColor;
         }
 
         private System.Collections.IEnumerator RunAfterRoutine(float seconds, Action action)
@@ -1661,6 +1867,22 @@ namespace LiarsBatting.Presentation
             RefreshRevealedRows();
         }
 
+        // Every digit of a secret opened means the other side knows it completely: that side loses.
+        // Both return true when they ended the match, so the caller must stop its own flow.
+        private bool EndAiMatchIfPlayerFullyRevealed()
+        {
+            if (_matchOver || !AllRevealed(_state.PlayerRevealed)) return false;
+            EndGame(false, "내 비밀번호가 모두 공개되었다");
+            return true;
+        }
+
+        private bool EndAiMatchIfAiFullyRevealed()
+        {
+            if (_matchOver || !AllRevealed(_state.AiRevealed)) return false;
+            EndGame(true, "상대의 비밀번호가 모두 공개되었다");
+            return true;
+        }
+
         private void OnPlayerGuessSubmitted(int[] guess)
         {
             _timer.Stop();
@@ -1714,7 +1936,7 @@ namespace LiarsBatting.Presentation
                         GameAudio.Play("SFX_Reveal_Busted");
                         // Caught it: the AI has to open one of its own digits.
                         _statusPanel.MyAttackHistory.MarkLastRowAsLie();
-                        RevealAiDigit(prefix: "적중! 상대가 거짓말을 했습니다.", onDone: EndMyAttackTurnAndPassToOpponent);
+                        RevealAiDigit("적중!", "상대가 거짓말을 했습니다", EndMyAttackTurnAndPassToOpponent);
                     }
                     else
                     {
@@ -1722,8 +1944,12 @@ namespace LiarsBatting.Presentation
                         // Wrong accusation: the player opens one of their own digits.
                         // The opponent's answer is now proven true -- keep that in the log.
                         _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
-                        PromptPlayerRevealChoice("헛다리! 상대는 진실을 말했습니다. 내 비밀번호 한 자리를 공개하세요.",
-                            _ => EndMyAttackTurnAndPassToOpponent());
+                        PromptPlayerRevealChoice("헛다리! 상대는 진실을 말했습니다.\n벌칙으로 내 비밀번호 한 자리를 공개하세요.",
+                            _ =>
+                            {
+                                if (EndAiMatchIfPlayerFullyRevealed()) return;   // that was my last hidden digit
+                                EndMyAttackTurnAndPassToOpponent();
+                            });
                     }
                 }));
         }
@@ -1753,8 +1979,13 @@ namespace LiarsBatting.Presentation
             _attackPicker.SetInteractable(false);
             SetMyTurnActive(false);
 
-            if (_state.AiHero == HeroId.Wizard && _ai.ShouldUseWizardReveal(_state.AiAbilityCharges))
+            // The AI only opens its own digit when that won't be its last hidden one (it would lose).
+            if (_state.AiHero == HeroId.Wizard && _ai.ShouldUseWizardReveal(_state.AiAbilityCharges)
+                && HiddenCount(_state.AiRevealed) >= 2)
+            {
                 AiUseWizard();
+                if (EndAiMatchIfPlayerFullyRevealed()) return;   // its ability opened my last hidden digit
+            }
 
             if (_state.AiHero == HeroId.Priest && _ai.ShouldUsePriestQuery(_state.AiAbilityCharges))
             {
@@ -1800,7 +2031,10 @@ namespace LiarsBatting.Presentation
                 if (!challenge)
                 {
                     _ai.NarrowByOwnGuess(guess, reported);
-                    EndAiAttackTurnAndPassToPlayer();
+                    // Say what the opponent decided -- the turn used to just move on without a word.
+                    GameAudio.Play("SFX_Trust_Accept");
+                    ShowBanner("<size=48>상대가 당신의 대답을 믿었습니다</size>", NoticeHoldSeconds,
+                        EndAiAttackTurnAndPassToPlayer);
                     return;
                 }
 
@@ -1810,8 +2044,12 @@ namespace LiarsBatting.Presentation
                     // Caught: the reported value is known-false, so there's nothing
                     // honest to narrow the AI's model by this turn -- it only gains
                     // the digit reveal, not extra information.
-                    PromptPlayerRevealChoice("상대가 당신의 거짓말을 눈치챘습니다! 내 비밀번호 한 자리를 공개하세요.",
-                        _ => EndAiAttackTurnAndPassToPlayer());
+                    PromptPlayerRevealChoice("상대가 당신의 거짓말을 눈치챘습니다!\n벌칙으로 내 비밀번호 한 자리를 공개하세요.",
+                        _ =>
+                        {
+                            if (EndAiMatchIfPlayerFullyRevealed()) return;   // that was my last hidden digit
+                            EndAiAttackTurnAndPassToPlayer();
+                        });
                 }
                 else
                 {
@@ -1819,7 +2057,7 @@ namespace LiarsBatting.Presentation
                     // Wrong accusation: the AI opens one of its own digits, but the
                     // (confirmed-true) result is still good information to narrow by.
                     _ai.NarrowByOwnGuess(guess, reported);
-                    RevealAiDigit(prefix: "상대가 당신을 의심했지만 틀렸습니다!", onDone: EndAiAttackTurnAndPassToPlayer);
+                    RevealAiDigit("상대의 헛다리!", "상대가 당신을 의심했지만 틀렸습니다", EndAiAttackTurnAndPassToPlayer);
                 }
             });
         }
@@ -1837,20 +2075,22 @@ namespace LiarsBatting.Presentation
             PromptPriestDefenseChoice(position, digit, answer => EndAiAttackTurnAndPassToPlayer());
         }
 
-        // Shared by both directions: forces open one of the AI's own digits and
-        // shows the result before continuing.
-        private void RevealAiDigit(string prefix, Action onDone)
+        // Shared by both directions: forces open one of the AI's own digits and announces it with a big
+        // banner (what happened, which position, and the card itself) before continuing. If that was the
+        // AI's last hidden digit the player has won, and the banner leads into the result instead.
+        private void RevealAiDigit(string headline, string detail, Action onDone)
         {
             int idx = _ai.PickRevealIndex(_state.AiRevealed);
-            if (idx < 0)
-            {
-                _choiceOverlay.Show($"{prefix} (이미 모든 자리가 공개됨)", ("확인", onDone));
-                return;
-            }
+            if (idx < 0) { onDone(); return; }
+
             _state.AiRevealed[idx] = true;
             RefreshRevealedRows();
-            _choiceOverlay.Show($"{prefix} 상대 비밀번호 {idx + 1}번째 자리 공개: {_state.AiSecret[idx]}",
-                ("확인", onDone));
+            string text = RevealNoticeText(headline, detail, idx);
+            ShowBanner(text, RevealNoticeHoldSeconds, () =>
+            {
+                if (EndAiMatchIfAiFullyRevealed()) return;
+                onDone();
+            }, _state.AiSecret[idx]);
         }
 
         // Lets the player pick which of their own still-hidden digits to open.
@@ -1889,6 +2129,7 @@ namespace LiarsBatting.Presentation
         {
             _statusPanel.OpponentRevealed.Refresh(_state.AiSecret, _state.AiRevealed);
             _statusPanel.MyRevealed.Refresh(_state.PlayerSecret, _state.PlayerRevealed);
+            RefreshMyAbilityUI();   // the Wizard button depends on how many of my digits are still hidden
         }
 
         // Shows the true result of the opponent's guess (computed against my real
@@ -1898,6 +2139,15 @@ namespace LiarsBatting.Presentation
         private void PromptDefenseChoice(int[] opponentGuess, JudgeResult trueResult, int lieTokensLeft,
             bool canLieAboutWin, Action<JudgeResult, bool> onChoice)
         {
+            // The opponent guessed my secret exactly (4S 0B). Only Hunter, with a LIE TOKEN to spend, may
+            // deny it; for everyone else there is no decision to make, so it's an immediate defeat rather
+            // than a popup that just asks to click "send the truth".
+            if (trueResult.IsWin && !(canLieAboutWin && lieTokensLeft > 0))
+            {
+                onChoice(trueResult, false);
+                return;
+            }
+
             void Resolve(JudgeResult result, bool usedToken)
             {
                 _timer.Stop();
@@ -2066,6 +2316,8 @@ namespace LiarsBatting.Presentation
 
         private void EndGame(bool playerWon, string message = null)
         {
+            if (_matchOver) return;
+            _matchOver = true;
             _timer.Stop();
             _matchSession++;
             CancelTurnAnnouncement();

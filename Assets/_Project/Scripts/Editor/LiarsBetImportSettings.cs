@@ -10,7 +10,7 @@ public class LiarsBetImportSettings : AssetPostprocessor
         bool isCard = assetPath.Contains("/Resources/Cards/");
         bool isBackground = assetPath.Contains("/Resources/Backgrounds/");
         bool isButton = assetPath.Contains("/Resources/Buttons/");
-        bool isHud = assetPath.Contains("/Resources/Hud/");
+        bool isHud = assetPath.Contains("/Resources/Hud/") || assetPath.Contains("/Resources/Logo/");   // same uncompressed full-rect sprite treatment
         bool isChoice = assetPath.Contains("/Resources/ChoiceButtons/");
         bool isResult = assetPath.Contains("/Resources/Result/");
         if (!isCard && !isBackground && !isButton && !isHud && !isChoice && !isResult) return;

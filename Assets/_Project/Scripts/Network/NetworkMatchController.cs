@@ -68,11 +68,22 @@ namespace LiarsBatting.Network
         public event Action<JudgeResult> OnOpponentResponse;
         public event Action OnChallengeNeedsMyJudgement;
         public event Action OnIMustReveal;
+        // A digit the opponent was forced to open by a trust/challenge outcome.
         public event Action<MatchSide, int, int> OnOpponentRevealed;
+        // The opponent (as attacker) trusted my answer: no challenge, no reveal, the turn just moves on.
+        public event Action OnOpponentTrusted;
         public event Action<MatchSide> OnTurnChanged;
-        public event Action<MatchSide> OnGameOver;
+        // (winner, reason). Fires on BOTH sides: for the side that writes the "finished" document
+        // it fires locally, since my own write's echo is filtered out of my own poll (the seq gate)
+        // and the loser is exactly the side that writes it.
+        public event Action<MatchSide, string> OnGameOver;
         // Fires on the side that did NOT surrender (the surrenderer ends locally).
         public event Action OnOpponentSurrendered;
+
+        public const string GameOverByGuess = "guess";
+        public const string GameOverByFullReveal = "fullReveal";
+
+        public MatchSide OpponentSide => OtherSide(MySide);
         public event Action<string> OnError;
 
         // Rogue: fires on the ATTACKER's client once the defender truthfully
@@ -86,6 +97,8 @@ namespace LiarsBatting.Network
         // Wizard: fires on the RESPONDING side (whoever didn't use the ability)
         // to tell them to reveal one of their own random digits in reply.
         public event Action OnMustRevealForWizard;
+        // A digit the opponent opened through a Wizard ability (their own pick, or their reply to mine).
+        public event Action<int, int> OnOpponentWizardReveal;
 
         public NetworkMatchController(FirestoreClient db, MonoBehaviour host, string matchId,
             MatchSide mySide, string myNickname, string opponentNickname)
@@ -187,16 +200,22 @@ namespace LiarsBatting.Network
                         break;
 
                     case "turn_done":
+                        // Three things end a turn: a reveal (after a challenge), a Priest answer, or
+                        // -- with neither -- the attacker simply trusting my answer.
                         string revealedBy = FirestoreClient.ReadString(doc, "revealedBy", "");
-                        if (!string.IsNullOrEmpty(revealedBy) && revealedBy != SideKey(MySide))
+                        bool hadReveal = !string.IsNullOrEmpty(revealedBy);
+                        bool isPriestAnswer = FirestoreClient.HasField(doc, "priestAnswerBool");
+                        if (hadReveal && revealedBy != SideKey(MySide))
                         {
                             var side = revealedBy == "A" ? MatchSide.A : MatchSide.B;
                             int idx = (int)FirestoreClient.ReadInt(doc, "revealedIndex", -1);
                             int digit = (int)FirestoreClient.ReadInt(doc, "revealedDigit", -1);
                             OnOpponentRevealed?.Invoke(side, idx, digit);
                         }
-                        if (FirestoreClient.HasField(doc, "priestAnswerBool"))
+                        if (isPriestAnswer)
                             OnPriestAnswer?.Invoke(FirestoreClient.ReadBool(doc, "priestAnswerBool", false));
+                        else if (!hadReveal)
+                            OnOpponentTrusted?.Invoke();
                         OnTurnChanged?.Invoke(_turnAttacker);
                         break;
 
@@ -207,7 +226,8 @@ namespace LiarsBatting.Network
                             break;
                         }
                         string winner = FirestoreClient.ReadString(doc, "winner", "");
-                        OnGameOver?.Invoke(winner == "A" ? MatchSide.A : MatchSide.B);
+                        string reason = FirestoreClient.ReadString(doc, "reason", GameOverByGuess);
+                        OnGameOver?.Invoke(winner == "A" ? MatchSide.A : MatchSide.B, reason);
                         break;
 
                     case "rogue_query":
@@ -233,10 +253,9 @@ namespace LiarsBatting.Network
                         string userSide = FirestoreClient.ReadString(doc, "wizardUserSide", "");
                         if (userSide != SideKey(MySide))
                         {
-                            var side = userSide == "A" ? MatchSide.A : MatchSide.B;
                             int idx = (int)FirestoreClient.ReadInt(doc, "wizardUserIndex", -1);
                             int digit = (int)FirestoreClient.ReadInt(doc, "wizardUserDigit", -1);
-                            OnOpponentRevealed?.Invoke(side, idx, digit);
+                            OnOpponentWizardReveal?.Invoke(idx, digit);
                             OnMustRevealForWizard?.Invoke();
                         }
                         break;
@@ -245,10 +264,9 @@ namespace LiarsBatting.Network
                         string responderSide = FirestoreClient.ReadString(doc, "wizardResponderSide", "");
                         if (responderSide != SideKey(MySide))
                         {
-                            var side = responderSide == "A" ? MatchSide.A : MatchSide.B;
                             int idx = (int)FirestoreClient.ReadInt(doc, "wizardResponderIndex", -1);
                             int digit = (int)FirestoreClient.ReadInt(doc, "wizardResponderDigit", -1);
-                            OnOpponentRevealed?.Invoke(side, idx, digit);
+                            OnOpponentWizardReveal?.Invoke(idx, digit);
                         }
                         break;
                 }
@@ -366,11 +384,19 @@ namespace LiarsBatting.Network
             WriteBaseDoc("turn_done", extra);
         }
 
-        public void SubmitGameOver(MatchSide winner)
+        // reason lets the other client say WHY the match ended (guessed secret vs. every digit opened).
+        public void SubmitGameOver(MatchSide winner, string reason = GameOverByGuess)
         {
             _winner = SideKey(winner);
-            var extra = new JObject { ["winner"] = FirestoreClient.StringField(_winner) };
+            var extra = new JObject
+            {
+                ["winner"] = FirestoreClient.StringField(_winner),
+                ["reason"] = FirestoreClient.StringField(reason)
+            };
             WriteBaseDoc("finished", extra);
+            // The side that writes this is the loser, and its own write is filtered out of its own
+            // poll -- without this it would never be told the match is over (no defeat screen).
+            OnGameOver?.Invoke(winner, reason);
         }
 
         // Ends the match immediately with the other side as the winner. Written

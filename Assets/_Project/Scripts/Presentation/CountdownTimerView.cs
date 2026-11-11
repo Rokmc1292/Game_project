@@ -58,6 +58,20 @@ namespace LiarsBatting.Presentation
             _routine = _host.StartCoroutine(Run(seconds, onExpired));
         }
 
+        // Display-only countdown for the OPPONENT's decision time (their guess, their truth-or-lie
+        // choice, their trust-or-challenge choice), so the hourglass keeps running on my screen while
+        // it's their move. Nothing happens when it runs out -- their own client acts on its own timer --
+        // and none of the urgent tick / timeout sounds play, since it isn't my clock.
+        public void StartSpectating(float seconds)
+        {
+            Stop();
+            IsSpectating = true;
+            _routine = _host.StartCoroutine(Spectate(seconds));
+        }
+
+        // True while the running countdown is the opponent's (display-only).
+        public bool IsSpectating { get; private set; }
+
         public void Stop()
         {
             if (_routine != null)
@@ -65,7 +79,22 @@ namespace LiarsBatting.Presentation
                 _host.StopCoroutine(_routine);
                 _routine = null;
             }
+            IsSpectating = false;
             _root.SetActive(false);
+            OnStopped?.Invoke();
+        }
+
+        private IEnumerator Spectate(float seconds)
+        {
+            float remaining = seconds;
+            while (remaining > 0f)
+            {
+                OnTick?.Invoke(remaining, seconds);
+                yield return null;
+                remaining -= Time.deltaTime;
+            }
+            _routine = null;
+            IsSpectating = false;
             OnStopped?.Invoke();
         }
 

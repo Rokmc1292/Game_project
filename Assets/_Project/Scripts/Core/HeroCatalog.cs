@@ -39,8 +39,8 @@ namespace LiarsBatting.Core
             {
                 Id = HeroId.Rogue, Name = "진가려",
                 AbilityName = "진실 간파",
-                AbilityDescription = "게임당 2회, 상대 응답의 진실/거짓 여부를 확인합니다.",
-                Charges = 2, ConsumesTurn = false
+                AbilityDescription = "게임당 1회, 상대 응답의 진실/거짓 여부를 확인합니다.",
+                Charges = 1, ConsumesTurn = false
             },
             new HeroInfo
             {
