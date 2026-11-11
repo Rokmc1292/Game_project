@@ -42,11 +42,18 @@ namespace LiarsBatting.Presentation
             _frame.enabled = false;
 
             _nameText = UiFactory.Text(Root, "", 12, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(_nameText, 16);
 
             // The player's equipped title under the hero name (mine, the online opponent's, or "AI"
-            // for the AI). Hidden while empty so it takes no room.
+            // for the AI). Hidden while empty so it takes no room. Always ONE line: a long title
+            // shrinks to fit instead of wrapping onto (and over) the name.
             _subtitleText = UiFactory.Text(Root, "", 11, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Italic);
             _subtitleText.raycastTarget = false;
+            _subtitleText.verticalOverflow = VerticalWrapMode.Truncate;
+            _subtitleText.resizeTextForBestFit = true;
+            _subtitleText.resizeTextMinSize = 7;
+            _subtitleText.resizeTextMaxSize = 11;
+            UiFactory.SetHeight(_subtitleText, 14);
             var subtitleShadow = _subtitleText.gameObject.AddComponent<Shadow>();
             subtitleShadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
             subtitleShadow.effectDistance = new Vector2(1f, -1f);

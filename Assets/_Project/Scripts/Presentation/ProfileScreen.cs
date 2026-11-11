@@ -141,7 +141,11 @@ namespace LiarsBatting.Presentation
             var left = UiFactory.VerticalGroup(columns, "Identity", spacing: 8, childAlign: TextAnchor.UpperCenter);
             FixedWidth(left, 300);
 
-            var frame = UiFactory.Panel(left, "PortraitFrame", Slot);
+            // Centred row so the picture box keeps its own width (the column would stretch it to
+            // 300 wide, and a frame drawn over a too-wide box doesn't fit the portrait).
+            var frameRow = UiFactory.HorizontalGroup(left, "PortraitRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
+            FixedHeight(frameRow, 206);
+            var frame = UiFactory.Panel(frameRow, "PortraitFrame", Slot);
             UiFactory.SetSize(frame, 170, 206);
             _bigPortraitFrame = frame.gameObject.AddComponent<Outline>();
             _bigPortraitFrame.effectColor = Brass;

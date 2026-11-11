@@ -89,7 +89,7 @@ namespace LiarsBatting.Progression
                 list.Add(new RewardInfo(SkinId(h, 0), RewardKind.HeroSkin, "기본 초상화", 1, "FFFFFF", h));
                 list.Add(new RewardInfo(EffectId(h, false), RewardKind.HeroEffect, "효과 없음", 1, null, h));
                 list.Add(new RewardInfo($"{h}_title1", RewardKind.Title, titles.first, HeroTitleLevel, null, h));
-                list.Add(new RewardInfo(SkinId(h, 1), RewardKind.HeroSkin, "세피아 초상화", HeroSkin1Level, "E8C9A0", h));
+                list.Add(new RewardInfo(SkinId(h, 1), RewardKind.HeroSkin, "고급 초상화", HeroSkin1Level, "FFF4E2", h));
                 list.Add(new RewardInfo(EffectId(h, true), RewardKind.HeroEffect, "움직이는 초상화", HeroEffectLevel, null, h));
                 list.Add(new RewardInfo($"{h}_title2", RewardKind.Title, titles.master, HeroMasterLevel, null, h));
                 list.Add(new RewardInfo(SkinId(h, 2), RewardKind.HeroSkin, "황금 초상화", HeroMasterLevel, "FFE27A", h));
