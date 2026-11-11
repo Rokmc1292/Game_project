@@ -456,7 +456,7 @@ namespace LiarsBatting.Presentation
             var centered = UiFactory.HorizontalGroup(backdrop, "SettingsCenter", childAlign: TextAnchor.MiddleCenter);
             centered.anchorMin = new Vector2(0.04f, 0.5f);
             centered.anchorMax = new Vector2(0.96f, 0.5f);
-            centered.sizeDelta = new Vector2(0f, 310f);
+            centered.sizeDelta = new Vector2(0f, 340f);
             centered.anchoredPosition = Vector2.zero;
 
             var panel = UiFactory.Panel(centered, "SettingsPanel", UITheme.Surface2);
@@ -465,20 +465,27 @@ namespace LiarsBatting.Presentation
             MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
 
             var content = UiFactory.VerticalGroup(panel, "Content", spacing: 12,
-                padding: new RectOffset(28, 28, 20, 20));
+                padding: new RectOffset(36, 36, 22, 22));
             UiFactory.StretchToFillParent(content);
-            var title = UiFactory.Text(content, "사운드 설정", 22, UITheme.Ink,
-                TextAnchor.MiddleLeft, FontStyle.Bold);
-            UiFactory.SetHeight(title, 32);
+            var title = UiFactory.Text(content, "사운드 설정", 24, UITheme.Ink,
+                TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(title, 34);
+            AddTextShadow(title);
+            var divider = UiFactory.Panel(content, "Divider", UITheme.Border);
+            UiFactory.SetHeight(divider, 1);
+            divider.GetComponent<Image>().raycastTarget = false;
 
             BuildSoundRow(content, "배경음", "Music", GameAudio.SetMusicLevel,
                 GameAudio.SetMusicMuted, out _musicSlider, out _musicMute);
             BuildSoundRow(content, "효과음", "Effects", GameAudio.SetEffectsLevel,
                 GameAudio.SetEffectsMuted, out _effectsSlider, out _effectsMute);
 
-            var close = UiFactory.Button(content, "닫기", UITheme.Surface2, UITheme.Ink, CloseSoundSettings, 14);
+            var closeRow = UiFactory.HorizontalGroup(content, "CloseRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(closeRow, 50);
+            UiFactory.SetFlexible(closeRow, 1, 0);
+            var close = UiFactory.Button(closeRow, "닫기", UITheme.Surface2, UITheme.Ink, CloseSoundSettings, 15);
             close.gameObject.name = "CloseSoundSettingsButton";
-            UiFactory.SetHeight(close, 38);
+            UiFactory.SetSize(close, 180, 48);
             MenuButtonStyle.Apply(close, primary: false);
             _soundSettings.SetActive(false);
         }
@@ -488,10 +495,12 @@ namespace LiarsBatting.Presentation
         {
             var section = UiFactory.VerticalGroup(parent, name + "Settings", spacing: 4);
             UiFactory.SetHeight(section, 72);
-            var heading = UiFactory.Text(section, label, 16, UITheme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
+            UiFactory.SetFlexible(section, 1, 0);   // keep its height when the dialog has spare room
+            var heading = UiFactory.Text(section, label, 16, new Color32(214, 160, 70, 255), TextAnchor.MiddleLeft, FontStyle.Bold);
             UiFactory.SetHeight(heading, 24);
             var row = UiFactory.HorizontalGroup(section, "Controls", spacing: 12);
             UiFactory.SetHeight(row, 40);
+            UiFactory.SetFlexible(row, 1, 0);
 
             var sliderObject = new GameObject(name + "Slider", typeof(RectTransform), typeof(Image), typeof(Slider));
             var sliderRect = (RectTransform)sliderObject.transform;
@@ -515,7 +524,7 @@ namespace LiarsBatting.Presentation
             fillArea.anchorMax = new Vector2(1f, 0.5f);
             fillArea.offsetMin = new Vector2(9f, -3f);
             fillArea.offsetMax = new Vector2(-9f, 3f);
-            var fill = UiFactory.Panel(fillArea, "Fill", UITheme.Clay);
+            var fill = UiFactory.Panel(fillArea, "Fill", new Color32(214, 160, 70, 255));   // brass
             fill.anchorMin = Vector2.zero;
             fill.anchorMax = Vector2.one;
             fill.offsetMin = Vector2.zero;
@@ -1223,20 +1232,28 @@ namespace LiarsBatting.Presentation
         {
             _heroSelectScreen = BuildFullScreenContainer(root, "HeroSelectScreen");
 
-            var centered = UiFactory.VerticalGroup(_heroSelectScreen.transform, "Centered", spacing: 16,
-                padding: new RectOffset(30, 30, 24, 24));
-            centered.anchorMin = new Vector2(0.05f, 0.08f);
-            centered.anchorMax = new Vector2(0.95f, 0.92f);
-            centered.offsetMin = Vector2.zero;
-            centered.offsetMax = Vector2.zero;
+            // Brass-bordered plate like the other lobby screens, nudged down so the big countdown
+            // number under the header stays clear of it.
+            var panel = UiFactory.Panel(_heroSelectScreen.transform, "Panel", UITheme.Surface2);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.sizeDelta = new Vector2(800f, 532f);
+            panel.anchoredPosition = new Vector2(0f, -30f);
+            MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
+            var centered = UiFactory.VerticalGroup(panel, "Content", spacing: 10,
+                padding: new RectOffset(36, 36, 22, 20), childAlign: TextAnchor.UpperCenter);
+            UiFactory.StretchToFillParent(centered);
 
-            UiFactory.Text(centered, "영웅을 선택하세요", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            var title = UiFactory.Text(centered, "영웅을 선택하세요", 24, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(title, 34);
+            AddTextShadow(title);
 
-            var grid = UiFactory.Grid(centered, "HeroGrid", columns: 4, cellSize: 180, spacing: 16);
+            var grid = UiFactory.Grid(centered, "HeroGrid", columns: 4, cellSize: 170, spacing: 14);
             var gridLayout = grid.GetComponent<GridLayoutGroup>();
-            gridLayout.cellSize = new Vector2(180, 226);
+            gridLayout.cellSize = new Vector2(170, 214);
             gridLayout.childAlignment = TextAnchor.UpperCenter;      // keep the cards centred on screen
-            UiFactory.SetHeight(grid, 226 * 2 + 16);                 // 7 heroes over 4 columns = 2 rows
+            UiFactory.SetHeight(grid, 214 * 2 + 14);                 // 7 heroes over 4 columns = 2 rows
 
             var brass = new Color32(214, 160, 70, 255);
             foreach (var info in HeroCatalog.All)
@@ -1253,13 +1270,13 @@ namespace LiarsBatting.Presentation
                 btn.onClick.AddListener(() => OnHeroChosen(heroId));
                 _heroSelectButtons.Add(btn);
 
-                var inner = UiFactory.VerticalGroup(cardGo.transform, "Inner", spacing: 5,
-                    padding: new RectOffset(12, 12, 16, 10), childAlign: TextAnchor.UpperCenter);
+                var inner = UiFactory.VerticalGroup(cardGo.transform, "Inner", spacing: 4,
+                    padding: new RectOffset(10, 10, 14, 8), childAlign: TextAnchor.UpperCenter);
                 UiFactory.StretchToFillParent(inner);
 
                 var portraitGo = new GameObject("Portrait", typeof(RectTransform), typeof(Image));
                 portraitGo.transform.SetParent(inner, false);
-                UiFactory.SetSize(portraitGo.transform, 108, 108);
+                UiFactory.SetSize(portraitGo.transform, 100, 100);
                 var portraitImg = portraitGo.GetComponent<Image>();
                 portraitImg.sprite = Resources.Load<Sprite>($"Heroes/Hero_{heroId}_Portrait");
                 portraitImg.preserveAspect = true;
@@ -1368,15 +1385,20 @@ namespace LiarsBatting.Presentation
             rt.offsetMin = new Vector2(0, 0);
             rt.offsetMax = new Vector2(0, -56);
 
-            var centered = UiFactory.VerticalGroup(rt, "Centered", spacing: 16,
-                padding: new RectOffset(40, 40, 40, 40));
-            centered.anchorMin = new Vector2(0.2f, 0.1f);
-            centered.anchorMax = new Vector2(0.8f, 0.9f);
-            centered.offsetMin = Vector2.zero;
-            centered.offsetMax = Vector2.zero;
+            // Brass-bordered plate like the other lobby screens, nudged down so the big countdown
+            // number under the header stays clear of it.
+            var panel = UiFactory.Panel(rt, "Panel", UITheme.Surface2);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.sizeDelta = new Vector2(660f, 540f);
+            panel.anchoredPosition = new Vector2(0f, -30f);
+            MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
+            var centered = UiFactory.VerticalGroup(panel, "Content", spacing: 10,
+                padding: new RectOffset(40, 40, 22, 20), childAlign: TextAnchor.UpperCenter);
+            UiFactory.StretchToFillParent(centered);
 
-            UiFactory.Text(centered, "당신의 비밀번호 4자리를 선택하세요", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.Text(centered, "0~9 중 중복 없는 숫자 4개. 상대는 이 번호를 볼 수 없습니다.", 13, UITheme.Muted, TextAnchor.MiddleCenter);
+            AddLobbyTitle(centered, "비밀번호 4자리를 정하세요", "0~9 중 중복 없는 숫자 4개. 상대는 이 번호를 볼 수 없습니다.");
 
             _setupPicker = new CardPickerView(centered, "내 비밀번호", "게임 시작", OnSecretChosen);
         }
