@@ -80,6 +80,9 @@ namespace LiarsBatting.Presentation
         private GameObject _gameOverScreen;
 
         private Text _randomMatchStatusText;
+        private Text _randomMatchWaitText;
+        private readonly Image[] _randomSearchCards = new Image[4];
+        private float _randomSearchStart;
         private InputField _friendTargetInput;
         private Text _friendStatusText;
         private Button _friendInviteButton;
@@ -170,6 +173,7 @@ namespace LiarsBatting.Presentation
             if (_statusPanel != null && _headerText != null)
                 _statusPanel.SetTurnLabel(_headerText.text);
             if (_matchClockRunning) _statusPanel.SetElapsed(Time.unscaledTime - _matchStartTime);
+            if (_randomMatchScreen != null && _randomMatchScreen.activeSelf) AnimateRandomSearch();
         }
 
         // The match clock above the hourglass: runs from the moment the match screen opens until
@@ -587,23 +591,91 @@ namespace LiarsBatting.Presentation
         private void BuildRandomMatchScreen(Transform root)
         {
             _randomMatchScreen = BuildFullScreenContainer(root, "RandomMatchScreen");
+            var content = BuildLobbyPanel(_randomMatchScreen.transform, new Vector2(520f, 390f));
 
-            var centered = UiFactory.VerticalGroup(_randomMatchScreen.transform, "Centered", spacing: 18,
-                padding: new RectOffset(40, 40, 40, 40));
-            centered.anchorMin = new Vector2(0.24f, 0.32f);
-            centered.anchorMax = new Vector2(0.76f, 0.68f);
-            centered.offsetMin = Vector2.zero;
-            centered.offsetMax = Vector2.zero;
+            AddLobbyTitle(content, "랜덤 매칭", "같은 시간에 랜덤 매칭을 누른 상대와 연결됩니다.");
 
-            _randomMatchStatusText = UiFactory.Text(centered, "매칭 상대를 찾는 중...", 18, UITheme.Ink,
+            // Four face-down cards; a highlight sweeps across them while searching (AnimateRandomSearch).
+            var cardRow = UiFactory.HorizontalGroup(content, "SearchCards", spacing: 12, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(cardRow, 78);
+            UiFactory.SetFlexible(cardRow, 1, 0);
+            for (int i = 0; i < _randomSearchCards.Length; i++)
+            {
+                var cardGo = new GameObject($"Card{i}", typeof(RectTransform), typeof(Image));
+                cardGo.transform.SetParent(cardRow, false);
+                UiFactory.SetSize(cardGo.transform, 54, 76);
+                var img = cardGo.GetComponent<Image>();
+                img.preserveAspect = true;
+                img.raycastTarget = false;
+                _randomSearchCards[i] = img;
+            }
+
+            _randomMatchStatusText = UiFactory.Text(content, "매칭 상대를 찾는 중...", 18, UITheme.Ink,
                 TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(_randomMatchStatusText, 28);
+            AddTextShadow(_randomMatchStatusText);
+            _randomMatchWaitText = UiFactory.Text(content, "", 13, UITheme.Muted, TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(_randomMatchWaitText, 20);
 
-            var cancelBtn = UiFactory.Button(centered, "취소", UITheme.Surface2, UITheme.Ink, () =>
+            var buttonRow = UiFactory.HorizontalGroup(content, "Buttons", spacing: 0, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(buttonRow, 52);
+            UiFactory.SetFlexible(buttonRow, 1, 0);
+            var cancelBtn = UiFactory.Button(buttonRow, "취소", UITheme.Surface2, UITheme.Ink, () =>
             {
                 _matchmaking?.LeaveRandomQueue();
                 ShowMainMenu();
-            }, 14);
-            UiFactory.SetHeight(cancelBtn, 40);
+            }, 16);
+            UiFactory.SetSize(cancelBtn, 200, 50);
+            MenuButtonStyle.Apply(cancelBtn, primary: false);
+        }
+
+        // Same look as the nickname screen: a brass-bordered dark plate in the middle of the screen
+        // holding a top-to-bottom column. Returns that column.
+        private static RectTransform BuildLobbyPanel(Transform screen, Vector2 size)
+        {
+            var panel = UiFactory.Panel(screen, "Panel", UITheme.Surface2);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.sizeDelta = size;
+            panel.anchoredPosition = new Vector2(0f, 10f);
+            MenuButtonStyle.ApplyPanel(panel.GetComponent<Image>());
+
+            var content = UiFactory.VerticalGroup(panel, "Content", spacing: 12,
+                padding: new RectOffset(44, 44, 32, 30), childAlign: TextAnchor.UpperCenter);
+            UiFactory.StretchToFillParent(content);
+            return content;
+        }
+
+        // Shadowed title, a muted one- or two-line description, and a thin divider.
+        private static void AddLobbyTitle(Transform content, string title, string description)
+        {
+            var titleText = UiFactory.Text(content, title, 24, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.SetHeight(titleText, 34);
+            AddTextShadow(titleText);
+            var descText = UiFactory.Text(content, description, 13, UITheme.Muted, TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(descText, description.Contains("\n") ? 40 : 22);
+            var divider = UiFactory.Panel(content, "Divider", UITheme.Border);
+            UiFactory.SetHeight(divider, 1);
+            divider.GetComponent<Image>().raycastTarget = false;
+        }
+
+        // While the random-match screen is up: a highlight walks across the four face-down cards
+        // and the wait time counts up.
+        private void AnimateRandomSearch()
+        {
+            float t = Time.unscaledTime - _randomSearchStart;
+            int lit = (int)(t * 2.5f) % _randomSearchCards.Length;
+            for (int i = 0; i < _randomSearchCards.Length; i++)
+            {
+                float target = i == lit ? 1f : 0.35f;
+                var c = _randomSearchCards[i].color;
+                c.a = Mathf.MoveTowards(c.a, target, Time.unscaledDeltaTime * 4f);
+                _randomSearchCards[i].color = c;
+                _randomSearchCards[i].rectTransform.localScale = Vector3.one * (i == lit ? 1.08f : 1f);
+            }
+            int s = (int)t;
+            _randomMatchWaitText.text = $"대기 시간 {s / 60}:{s % 60:00}";
         }
 
         private void ShowRandomMatchScreen()
@@ -613,6 +685,12 @@ namespace LiarsBatting.Presentation
             _headerText.text = "랜덤 매칭";
             _tokenText.text = "";
             _randomMatchStatusText.text = "매칭 상대를 찾는 중...";
+            _randomSearchStart = Time.unscaledTime;
+            foreach (var card in _randomSearchCards)
+            {
+                card.sprite = CardArt.Unknown();   // follows the equipped card skin
+                card.color = new Color(CardArt.Tint.r, CardArt.Tint.g, CardArt.Tint.b, 0.35f);
+            }
 
             _matchmaking = new MatchmakingService(_firestore, this, _nickname);
             _matchmaking.JoinRandomQueue(
@@ -627,23 +705,39 @@ namespace LiarsBatting.Presentation
         private void BuildFriendMatchScreen(Transform root)
         {
             _friendMatchScreen = BuildFullScreenContainer(root, "FriendMatchScreen");
+            var content = BuildLobbyPanel(_friendMatchScreen.transform, new Vector2(560f, 410f));
 
-            var centered = UiFactory.VerticalGroup(_friendMatchScreen.transform, "Centered", spacing: 14,
-                padding: new RectOffset(40, 40, 40, 40));
-            centered.anchorMin = new Vector2(0.26f, 0.24f);
-            centered.anchorMax = new Vector2(0.74f, 0.76f);
-            centered.offsetMin = Vector2.zero;
-            centered.offsetMax = Vector2.zero;
+            AddLobbyTitle(content, "친구 매칭",
+                "상대 닉네임을 입력해 초대를 보내세요.\n받은 초대는 어느 화면에 있든 자동으로 뜹니다.");
 
-            UiFactory.Text(centered, "친구 매칭", 20, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            UiFactory.Text(centered, "상대 닉네임을 입력해 초대를 보내세요.\n이 화면에 있는 동안 받은 초대도 자동으로 뜹니다.",
-                12, UITheme.Muted, TextAnchor.MiddleCenter);
+            var fieldLabel = UiFactory.Text(content, "상대 닉네임", 13, new Color32(214, 160, 70, 255),
+                TextAnchor.MiddleLeft, FontStyle.Bold);
+            UiFactory.SetHeight(fieldLabel, 20);
 
-            _friendTargetInput = UiFactory.InputField(centered, "상대 닉네임");
-            _friendStatusText = UiFactory.Text(centered, "", 12, UITheme.Muted, TextAnchor.MiddleCenter);
-            _friendStatusText.gameObject.SetActive(false);
+            _friendTargetInput = UiFactory.InputField(content, "예: 라이어짱");
+            _friendTargetInput.GetComponent<Image>().color = new Color(0.04f, 0.035f, 0.03f, 0.9f);   // recessed slot
+            var inputOutline = _friendTargetInput.gameObject.AddComponent<Outline>();
+            inputOutline.effectColor = UITheme.Border;
+            inputOutline.effectDistance = new Vector2(1.5f, -1.5f);
+            UiFactory.SetHeight(_friendTargetInput, 50);
 
-            _friendInviteButton = UiFactory.Button(centered, "초대 보내기", UITheme.Accent, Color.white, () =>
+            // Fixed height (two lines) so a status message never pushes the buttons around.
+            _friendStatusText = UiFactory.Text(content, "", 13, UITheme.Muted, TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(_friendStatusText, 36);
+
+            var buttonRow = UiFactory.HorizontalGroup(content, "Buttons", spacing: 12, childAlign: TextAnchor.MiddleCenter);
+            UiFactory.SetHeight(buttonRow, 52);
+            UiFactory.SetFlexible(buttonRow, 1, 0);
+
+            var backBtn = UiFactory.Button(buttonRow, "메인 메뉴로", UITheme.Surface2, UITheme.Ink, () =>
+            {
+                _matchmaking?.CancelFriendInvite(); // take back an invite nobody has answered yet
+                ShowMainMenu();
+            }, 15);
+            UiFactory.SetSize(backBtn, 170, 50);
+            MenuButtonStyle.Apply(backBtn, primary: false);
+
+            _friendInviteButton = UiFactory.Button(buttonRow, "초대 보내기", UITheme.Accent, Color.white, () =>
             {
                 string target = _friendTargetInput.text.Trim();
                 if (target.Length == 0) { ShowFriendStatus("닉네임을 입력해주세요.", true); return; }
@@ -668,22 +762,15 @@ namespace LiarsBatting.Presentation
                         _friendInviteButton.interactable = true;
                         ShowFriendStatus(error, true);
                     });
-            }, 15);
-            UiFactory.SetHeight(_friendInviteButton, 44);
-
-            var backBtn = UiFactory.Button(centered, "메인 메뉴로", UITheme.Bg, UITheme.Muted, () =>
-            {
-                _matchmaking?.CancelFriendInvite(); // take back an invite nobody has answered yet
-                ShowMainMenu();
-            }, 12);
-            UiFactory.SetHeight(backBtn, 30);
+            }, 16);
+            UiFactory.SetSize(_friendInviteButton, 220, 50);
+            MenuButtonStyle.Apply(_friendInviteButton, primary: true);
         }
 
         private void ShowFriendStatus(string message, bool isError)
         {
             _friendStatusText.text = message;
             _friendStatusText.color = isError ? UITheme.Clay : UITheme.Muted;
-            _friendStatusText.gameObject.SetActive(true);
         }
 
         private void ShowFriendMatchScreen()
@@ -692,7 +779,7 @@ namespace LiarsBatting.Presentation
             _headerText.text = "친구 매칭";
             _tokenText.text = "";
             _friendTargetInput.text = "";
-            _friendStatusText.gameObject.SetActive(false);
+            _friendStatusText.text = "";
             // The button is disabled while an invite is pending; leaving the screen mid-wait
             // used to leave it disabled for good.
             _friendInviteButton.interactable = true;
