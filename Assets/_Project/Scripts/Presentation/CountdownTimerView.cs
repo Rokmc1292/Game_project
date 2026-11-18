@@ -80,6 +80,7 @@ namespace LiarsBatting.Presentation
                 _routine = null;
             }
             IsSpectating = false;
+            GameAudio.Stop("SFX_Timer_Tick_Urgent");
             _root.SetActive(false);
             OnStopped?.Invoke();
         }

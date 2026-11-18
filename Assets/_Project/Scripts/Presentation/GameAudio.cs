@@ -13,21 +13,45 @@ namespace LiarsBatting.Presentation
         private const string EffectsVolumeKey = "lb_audio_effects_volume";
         private const string MusicMutedKey = "lb_audio_music_muted";
         private const string EffectsMutedKey = "lb_audio_effects_muted";
-        private const int EffectVoices = 7;
+        private const int EffectVoices = 12;
+        private const float ClimaxHoldSeconds = 8f;
+        private enum EffectCategory { Hover, UI, Timer, Gameplay, Hero, Result, Progress }
+        private enum MusicPhase { Lobby, Match, FinalChance, Result }
+
+        private readonly struct EffectSettings
+        {
+            public readonly EffectCategory Category;
+            public readonly int Priority;
+            public readonly float Cooldown;
+            public readonly float Duck;
+
+            public EffectSettings(EffectCategory category, int priority, float cooldown = 0.04f, float duck = 1f)
+            {
+                Category = category;
+                Priority = priority;
+                Cooldown = cooldown;
+                Duck = duck;
+            }
+        }
+
         private static GameAudio _instance;
         private readonly Dictionary<string, AudioClip> _clips = new Dictionary<string, AudioClip>();
+        private readonly Dictionary<string, float> _lastPlayed = new Dictionary<string, float>();
+        private readonly HashSet<string> _missingClips = new HashSet<string>();
         private AudioSource _music;
         private AudioSource[] _effects;
         private readonly int[] _voicePriority = new int[EffectVoices];
+        private readonly EffectCategory[] _voiceCategory = new EffectCategory[EffectVoices];
         private readonly long[] _voiceOrder = new long[EffectVoices];
         private readonly float[] _voiceGain = new float[EffectVoices];
+        private readonly float[] _voiceDuck = new float[EffectVoices];
         private Coroutine _musicTransition;
         private string _musicName;
         private long _sequence;
         private float _musicGain;
         private float _duckGain = 1f;
-        private float _duckTarget = 1f;
-        private float _duckUntil;
+        private MusicPhase _musicPhase;
+        private float _climaxUntil;
         private float _musicVolume;
         private float _effectsVolume;
         private bool _musicMuted;
@@ -37,6 +61,9 @@ namespace LiarsBatting.Presentation
         public static float EffectsLevel => _instance != null ? _instance._effectsVolume : DefaultVolume;
         public static bool MusicMuted => _instance != null && _instance._musicMuted;
         public static bool EffectsMuted => _instance != null && _instance._effectsMuted;
+#if UNITY_EDITOR
+        public static event System.Action<string> EditorEffectPlayed;
+#endif
 
         public static void Initialize()
         {
@@ -65,6 +92,8 @@ namespace LiarsBatting.Presentation
 
         private void Setup()
         {
+            if (_musicTransition != null) StopCoroutine(_musicTransition);
+            _lastPlayed.Clear();
             _musicVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(MusicVolumeKey, DefaultVolume));
             _effectsVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(EffectsVolumeKey, DefaultVolume));
             _musicMuted = PlayerPrefs.GetInt(MusicMutedKey, 0) != 0;
@@ -75,7 +104,8 @@ namespace LiarsBatting.Presentation
                 Debug.LogWarning("Audio catalog is missing. Open the project in Unity to generate it.");
             else
                 foreach (var clip in catalog.Clips)
-                    if (clip != null) _clips[clip.name] = clip;
+                    if (clip != null && !_clips.TryAdd(clip.name, clip))
+                        Debug.LogError($"Duplicate audio clip name: {clip.name}");
 
             if (FindAnyObjectByType<AudioListener>() == null) gameObject.AddComponent<AudioListener>();
             var sources = new List<AudioSource>(GetComponents<AudioSource>());
@@ -101,9 +131,24 @@ namespace LiarsBatting.Presentation
 
         private void Update()
         {
-            if (Time.unscaledTime >= _duckUntil) _duckTarget = 1f;
-            _duckGain = Mathf.MoveTowards(_duckGain, _duckTarget, Time.unscaledDeltaTime * 2f);
+            if (_effects == null) return;
+            float duckTarget = 1f;
+            for (int i = 0; i < _effects.Length; i++)
+                if (_effects[i].isPlaying && _voiceGain[i] > 0f)
+                    duckTarget = Mathf.Min(duckTarget, _voiceDuck[i]);
+            _duckGain = Mathf.MoveTowards(_duckGain, duckTarget,
+                Time.unscaledDeltaTime * (duckTarget < _duckGain ? 8f : 3f));
+            if (_musicPhase == MusicPhase.Match && _climaxUntil > 0f && Time.unscaledTime >= _climaxUntil)
+            {
+                _climaxUntil = 0f;
+                ContinueMatchMusic();
+            }
             ApplyMusicVolume();
+        }
+
+        private void OnDestroy()
+        {
+            if (_instance == this) _instance = null;
         }
 
         public static void SetMusicLevel(float value)
@@ -162,12 +207,14 @@ namespace LiarsBatting.Presentation
 
         public static void Play(string name, float pitch = 1f, float volume = 1f)
         {
-            if (_instance == null || !_instance._clips.TryGetValue(name, out var clip)) return;
+            if (!TryGetClip(name, out var clip)) return;
             var audio = _instance;
-            int priority = EffectPriority(name);
-            int limit = priority == 2 ? 4 : priority == 1 ? 2 : 1;
-            int sameCount = 0;
-            int oldestSame = -1;
+            var settings = SettingsFor(name);
+            float now = Time.unscaledTime;
+            if (audio._lastPlayed.TryGetValue(name, out float last) && now - last < settings.Cooldown) return;
+            int categoryCount = 0;
+            int categoryReplace = -1;
+            int sameClip = -1;
             int free = -1;
             int replace = -1;
             for (int i = 0; i < audio._effects.Length; i++)
@@ -177,41 +224,86 @@ namespace LiarsBatting.Presentation
                     if (free < 0) free = i;
                     continue;
                 }
-                if (audio._voicePriority[i] == priority)
+                if (audio._effects[i].clip == clip) sameClip = i;
+                if (audio._voiceCategory[i] == settings.Category)
                 {
-                    sameCount++;
-                    if (oldestSame < 0 || audio._voiceOrder[i] < audio._voiceOrder[oldestSame])
-                        oldestSame = i;
+                    categoryCount++;
+                    if (audio._voicePriority[i] <= settings.Priority &&
+                        (categoryReplace < 0 || audio._voiceOrder[i] < audio._voiceOrder[categoryReplace]))
+                        categoryReplace = i;
                 }
-                if (audio._voicePriority[i] <= priority &&
+                if (audio._voicePriority[i] < settings.Priority &&
                     (replace < 0 || audio._voicePriority[i] < audio._voicePriority[replace] ||
                      (audio._voicePriority[i] == audio._voicePriority[replace] &&
                       audio._voiceOrder[i] < audio._voiceOrder[replace])))
                     replace = i;
             }
-            int chosen = sameCount >= limit ? oldestSame : free >= 0 ? free : replace;
+            int chosen = sameClip >= 0 ? sameClip :
+                categoryCount >= CategoryLimit(settings.Category) ? categoryReplace :
+                free >= 0 ? free : replace;
             if (chosen < 0) return;
             var source = audio._effects[chosen];
             source.Stop();
             source.clip = clip;
-            source.pitch = pitch;
+            source.pitch = Mathf.Clamp(pitch, 0.1f, 3f);
             audio._voiceGain[chosen] = EffectsVolume * Mathf.Clamp01(volume) * EffectBalance(name);
             source.volume = audio._effectsMuted ? 0f : audio._voiceGain[chosen] * audio._effectsVolume;
-            audio._voicePriority[chosen] = priority;
+            audio._voicePriority[chosen] = settings.Priority;
+            audio._voiceCategory[chosen] = settings.Category;
+            audio._voiceDuck[chosen] = settings.Duck;
             audio._voiceOrder[chosen] = ++audio._sequence;
+            audio._lastPlayed[name] = now;
             source.Play();
-
-            float duck = name.StartsWith("SFX_Hero_") ? 0.4f :
-                name.StartsWith("SFX_Judge_") ? 0.5f : 1f;
-            if (duck < 1f)
-            {
-                audio._duckTarget = Mathf.Min(audio._duckTarget, duck);
-                audio._duckUntil = Mathf.Max(audio._duckUntil,
-                    Time.unscaledTime + clip.length / Mathf.Max(0.1f, pitch) + 0.5f);
-            }
+#if UNITY_EDITOR
+            EditorEffectPlayed?.Invoke(name);
+#endif
         }
 
-        // Attenuate louder clips, based on their measured RMS; leave quieter UI sounds untouched.
+        private static bool TryGetClip(string name, out AudioClip clip)
+        {
+            clip = null;
+            if (_instance == null || string.IsNullOrEmpty(name)) return false;
+            if (_instance._clips.TryGetValue(name, out clip)) return true;
+            if ((Application.isEditor || Debug.isDebugBuild) && _instance._missingClips.Add(name))
+                Debug.LogWarning($"Audio clip is missing: {name}");
+            return false;
+        }
+
+        public static float Duration(string name)
+            => TryGetClip(name, out var clip) ? clip.length : 0f;
+
+        public static void Stop(string name)
+        {
+            if (_instance == null) return;
+            for (int i = 0; i < _instance._effects.Length; i++)
+                if (_instance._effects[i].clip != null && _instance._effects[i].clip.name == name)
+                    _instance.StopVoice(i);
+        }
+
+        public static void StopEffects()
+        {
+            if (_instance == null) return;
+            for (int i = 0; i < _instance._effects.Length; i++) _instance.StopVoice(i);
+            _instance._duckGain = 1f;
+            _instance.ApplyMusicVolume();
+        }
+
+        public static void StopProgressEffects()
+        {
+            if (_instance == null) return;
+            for (int i = 0; i < _instance._effects.Length; i++)
+                if (_instance._voiceCategory[i] == EffectCategory.Progress) _instance.StopVoice(i);
+        }
+
+        private void StopVoice(int index)
+        {
+            _effects[index].Stop();
+            _effects[index].clip = null;
+            _voiceDuck[index] = 1f;
+            _voiceGain[index] = 0f;
+        }
+
+        // Conservative cue gains; RMS measurements guide matching, listening remains necessary.
         private static float EffectBalance(string name)
         {
             switch (name)
@@ -235,23 +327,135 @@ namespace LiarsBatting.Presentation
                 case "SFX_LieToken_Spend": return 0.92f;
                 case "SFX_Reveal_Busted": return 0.97f;
                 case "SFX_Truth_Declare": return 0.98f;
+                case "SFX_Result_Stamp_Draw": return 0.85f;
+                case "SFX_LastGuess_Start":
+                case "SFX_Match_Start": return 0.8f;
+                case "SFX_Digit_Reveal": return 0.65f;
+                case "SFX_Secret_Lock":
+                case "SFX_Hero_Select_Confirm":
+                case "SFX_Cosmetic_Equip":
+                case "SFX_UI_Error": return 0.6f;
+                case "SFX_Hero_DemonHunter_Seal": return 0.75f;
+                case "SFX_Priest_Answer_Yes": return 0.7f;
+                case "SFX_Priest_Answer_No": return 0.53f;
+                case "SFX_Progress_ChallengeComplete": return 0.58f;
+                case "SFX_Rematch_Requested":
+                case "SFX_Rematch_Ready":
+                case "SFX_Warrior_ExtraTurn":
+                case "SFX_Progress_LevelUp":
+                case "SFX_Progress_HeroLevelUp":
+                case "SFX_Progress_RewardUnlock": return 0.75f;
                 default: return 1f;
             }
         }
 
-        private static int EffectPriority(string name)
+        private static int CategoryLimit(EffectCategory category)
         {
-            if (name.EndsWith("_Hover")) return 0;
-            if (name == "SFX_Timer_Timeout" || name.StartsWith("SFX_Judge_") ||
-                name.StartsWith("SFX_Reveal_") || name.StartsWith("SFX_Result_Stamp_"))
-                return 2;
-            return 1;
+            switch (category)
+            {
+                case EffectCategory.Hover:
+                case EffectCategory.Timer:
+                case EffectCategory.Progress: return 1;
+                case EffectCategory.UI:
+                case EffectCategory.Hero: return 2;
+                default: return 4;
+            }
+        }
+
+        private static EffectSettings SettingsFor(string name)
+        {
+            switch (name)
+            {
+                case "SFX_UI_Hover":
+                case "SFX_Card_Hover": return new EffectSettings(EffectCategory.Hover, 0, 0.07f);
+                case "SFX_UI_Error": return new EffectSettings(EffectCategory.UI, 2, 2f);
+                case "SFX_UI_Click":
+                case "SFX_Card_Select":
+                case "SFX_Card_Deselect":
+                case "SFX_Cosmetic_Equip":
+                case "SFX_Hero_Select_Confirm": return new EffectSettings(EffectCategory.UI, 1);
+                case "SFX_Timer_Tick_Urgent": return new EffectSettings(EffectCategory.Timer, 3);
+                case "SFX_Timer_Timeout":
+                case "SFX_LastGuess_Start": return new EffectSettings(EffectCategory.Gameplay, 5, duck: 0.55f);
+                case "SFX_Judge_Strike":
+                case "SFX_Judge_Ball":
+                case "SFX_Judge_Out": return new EffectSettings(EffectCategory.Gameplay, 5, duck: 0.5f);
+                case "SFX_Reveal_Busted":
+                case "SFX_Reveal_Punished":
+                case "SFX_Digit_Reveal": return new EffectSettings(EffectCategory.Gameplay, 5);
+                case "SFX_Hero_Paladin_Restore":
+                case "SFX_Hero_Warrior_Rush":
+                case "SFX_Hero_Wizard_Clairvoyance":
+                case "SFX_Hero_Priest_Inquiry":
+                case "SFX_Hero_Rogue_Insight":
+                case "SFX_Hero_DemonHunter_Seal":
+                    return new EffectSettings(EffectCategory.Hero, 4, duck: 0.4f);
+                case "SFX_Result_Dim_Drop":
+                case "SFX_Result_Card_Reveal":
+                case "SFX_Result_Stamp_Win":
+                case "SFX_Result_Stamp_Lose":
+                case "SFX_Result_Stamp_Draw": return new EffectSettings(EffectCategory.Result, 6);
+                case "SFX_Progress_LevelUp":
+                case "SFX_Progress_HeroLevelUp":
+                case "SFX_Progress_ChallengeComplete":
+                case "SFX_Progress_RewardUnlock": return new EffectSettings(EffectCategory.Progress, 4);
+                default: return new EffectSettings(EffectCategory.Gameplay, 3);
+            }
+        }
+
+        public static void LobbyMusic()
+        {
+            if (_instance == null) return;
+            _instance._musicPhase = MusicPhase.Lobby;
+            _instance._climaxUntil = 0f;
+            Music("BGM_Lobby_Noir");
+        }
+
+        public static void StartMatchMusic()
+        {
+            if (_instance == null) return;
+            _instance._musicPhase = MusicPhase.Match;
+            _instance._climaxUntil = 0f;
+            Music("BGM_Match_Tension");
+        }
+
+        public static void ContinueMatchMusic()
+        {
+            if (_instance == null || _instance._musicPhase != MusicPhase.Match) return;
+            Music(Time.unscaledTime < _instance._climaxUntil ? "BGM_Match_Climax" : "BGM_Match_Tension");
+        }
+
+        public static void ReportResponse(int reportedStrikes)
+        {
+            if (_instance == null || _instance._musicPhase != MusicPhase.Match) return;
+            if (reportedStrikes == 3) _instance._climaxUntil = Time.unscaledTime + ClimaxHoldSeconds;
+            ContinueMatchMusic();
+        }
+
+        public static void BeginFinalChance()
+        {
+            if (_instance == null || _instance._musicPhase == MusicPhase.FinalChance ||
+                _instance._musicPhase == MusicPhase.Result) return;
+            _instance._musicPhase = MusicPhase.FinalChance;
+            _instance._climaxUntil = 0f;
+            Play("SFX_LastGuess_Start");
+            Music("BGM_Match_FinalChance");
+        }
+
+        public static void ResultMusic(bool won, bool draw = false)
+        {
+            if (_instance == null || _instance._musicPhase == MusicPhase.Result) return;
+            _instance._musicPhase = MusicPhase.Result;
+            _instance._climaxUntil = 0f;
+            StopEffects();
+            Music(draw ? "BGM_Draw_Stinger" : won ? "BGM_Win_Stinger" : "BGM_Lose_Stinger", false);
         }
 
         public static void Music(string name, bool loop = true)
         {
-            if (_instance == null || !_instance._clips.TryGetValue(name, out var clip)) return;
-            if (_instance._musicName == name && _instance._music.isPlaying) return;
+            if (!TryGetClip(name, out var clip)) return;
+            if (_instance._musicName == name &&
+                (_instance._music.isPlaying || _instance._musicTransition != null)) return;
             if (_instance._musicTransition != null) _instance.StopCoroutine(_instance._musicTransition);
             _instance._musicName = name;
             _instance._musicTransition = _instance.StartCoroutine(_instance.SwitchMusic(clip, loop));

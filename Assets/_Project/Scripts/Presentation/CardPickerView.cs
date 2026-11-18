@@ -30,7 +30,6 @@ namespace LiarsBatting.Presentation
         private readonly Button _submitButton;
         private readonly Action<int[]> _onSubmit;
         private readonly CardFlightAnimator _flightAnimator;
-        private readonly bool _isAttackPicker;
 
         private static readonly Color TrayUsedTint = new Color(0.30f, 0.30f, 0.30f, 1f);
         private static readonly Color TrayDisabledTint = new Color(0.20f, 0.20f, 0.20f, 1f);
@@ -55,7 +54,8 @@ namespace LiarsBatting.Presentation
             var submitRow = UiFactory.HorizontalGroup(Root, "SubmitRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(submitRow, 52);
             UiFactory.SetFlexible(submitRow, 1, 0);
-            _submitButton = UiFactory.Button(submitRow, submitLabel, UITheme.Accent, Color.white, Submit, 17);
+            _submitButton = UiFactory.Button(submitRow, submitLabel, UITheme.Accent, Color.white, Submit, 17,
+                playClickSound: false);
             UiFactory.SetSize(_submitButton, 300, 52);
             MenuButtonStyle.ApplyChoice(_submitButton, UITheme.Accent);
             RefreshSubmitInteractable();
@@ -66,7 +66,6 @@ namespace LiarsBatting.Presentation
             Action<int[]> onSubmit, Vector2 slotCard, Vector2 trayCard)
         {
             _onSubmit = onSubmit;
-            _isAttackPicker = true;
             _flightAnimator = GetFlightAnimator(slotsParent);
 
             var slotsRow = BuildSlots(slotsParent, slotCard, 16f);
@@ -79,7 +78,8 @@ namespace LiarsBatting.Presentation
             UiFactory.SetHeight(hint, 16);
             BuildTray(Root, trayCard, 8f);
 
-            _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16);
+            _submitButton = UiFactory.Button(Root, submitLabel, UITheme.Accent, Color.white, Submit, 16,
+                playClickSound: false);
             UiFactory.SetHeight(_submitButton, 40);
             MenuButtonStyle.ApplyChoice(_submitButton, UITheme.Accent);
             RefreshSubmitInteractable();
@@ -246,7 +246,6 @@ namespace LiarsBatting.Presentation
         private void Submit()
         {
             if (Array.IndexOf(_slotValues, -1) >= 0) return;
-            if (_isAttackPicker) GameAudio.Play("SFX_Guess_Submit");
             var result = new[] { _slotValues[0], _slotValues[1], _slotValues[2], _slotValues[3] };
             ResetAll();
             _onSubmit?.Invoke(result);

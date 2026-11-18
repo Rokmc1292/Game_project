@@ -188,7 +188,7 @@ namespace LiarsBatting.Presentation
         }
 
         public static Button Button(Transform parent, string label, Color bg, Color fg, Action onClick,
-            int fontSize = 15)
+            int fontSize = 15, bool playClickSound = true)
         {
             var go = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image), typeof(Button));
             var rt = (RectTransform)go.transform;
@@ -198,7 +198,8 @@ namespace LiarsBatting.Presentation
             var btn = go.GetComponent<Button>();
             btn.targetGraphic = img;
             go.AddComponent<ButtonHoverSound>();
-            btn.onClick.AddListener(() => GameAudio.Play("SFX_UI_Click", volume: 0.6f));
+            if (playClickSound)
+                btn.onClick.AddListener(() => GameAudio.Play("SFX_UI_Click", volume: 0.6f));
             btn.onClick.AddListener(() => onClick?.Invoke());
 
             var txt = Text(rt, label, fontSize, fg, TextAnchor.MiddleCenter, FontStyle.Bold);

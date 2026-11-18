@@ -20,7 +20,7 @@ namespace LiarsBatting.Network
             _host = host;
         }
 
-        public void GetDocument(string path, Action<JObject> onSuccess, Action<string> onError)
+        public virtual void GetDocument(string path, Action<JObject> onSuccess, Action<string> onError)
             => _host.StartCoroutine(GetDocumentCo(path, onSuccess, onError));
 
         // Each segment of a document path is escaped on its own: a nickname containing '#', '?', '%' or a
@@ -48,7 +48,7 @@ namespace LiarsBatting.Network
 
         // Create-or-replace. Firestore's PATCH on a specific document path does
         // both, which is exactly the "set" semantics this game needs.
-        public void SetDocument(string path, JObject fields, Action onSuccess, Action<string> onError)
+        public virtual void SetDocument(string path, JObject fields, Action onSuccess, Action<string> onError)
             => _host.StartCoroutine(SetDocumentCo(path, fields, onSuccess, onError));
 
         private IEnumerator SetDocumentCo(string path, JObject fields, Action onSuccess, Action<string> onError)
@@ -70,7 +70,7 @@ namespace LiarsBatting.Network
         // Creates collection/{docId} only if no document has that id yet. When one already exists
         // Firestore answers 409 ALREADY_EXISTS and onExists fires instead -- unlike a read-then-
         // SetDocument, two clients racing for the same id can't both succeed (nicknames).
-        public void CreateDocument(string collection, string docId, JObject fields,
+        public virtual void CreateDocument(string collection, string docId, JObject fields,
             Action onSuccess, Action onExists, Action<string> onError)
             => _host.StartCoroutine(CreateDocumentCo(collection, docId, fields, onSuccess, onExists, onError));
 
@@ -97,7 +97,7 @@ namespace LiarsBatting.Network
         // SetDocument's full replace, two clients can safely patch DIFFERENT
         // fields on the same document at the same time without either one
         // clobbering what the other just wrote.
-        public void PatchFields(string path, JObject fields, string[] fieldPaths,
+        public virtual void PatchFields(string path, JObject fields, string[] fieldPaths,
             Action onSuccess, Action<string> onError)
             => _host.StartCoroutine(PatchFieldsCo(path, fields, fieldPaths, onSuccess, onError));
 
@@ -122,7 +122,7 @@ namespace LiarsBatting.Network
             else onError?.Invoke(DescribeError(req));
         }
 
-        public void ListCollection(string path, Action<JArray> onSuccess, Action<string> onError)
+        public virtual void ListCollection(string path, Action<JArray> onSuccess, Action<string> onError)
             => _host.StartCoroutine(ListCollectionCo(path, onSuccess, onError));
 
         private IEnumerator ListCollectionCo(string path, Action<JArray> onSuccess, Action<string> onError)
@@ -144,7 +144,7 @@ namespace LiarsBatting.Network
             }
         }
 
-        public void DeleteDocument(string path, Action onSuccess, Action<string> onError)
+        public virtual void DeleteDocument(string path, Action onSuccess, Action<string> onError)
             => _host.StartCoroutine(DeleteDocumentCo(path, onSuccess, onError));
 
         private IEnumerator DeleteDocumentCo(string path, Action onSuccess, Action<string> onError)

@@ -630,12 +630,14 @@ namespace LiarsBatting.Presentation
         {
             _statusText.text = message;
             _statusText.color = isError ? UITheme.Clay : UITheme.Muted;
+            if (isError && Root.activeInHierarchy) GameAudio.Play("SFX_UI_Error");
         }
 
         public void SetCosmeticsStatus(string message, bool isError)
         {
             _cosmeticsStatus.text = message;
             _cosmeticsStatus.color = isError ? UITheme.Clay : UITheme.Muted;
+            if (isError && Root.activeInHierarchy) GameAudio.Play("SFX_UI_Error");
         }
 
         private static void AddShadow(Text text)

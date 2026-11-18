@@ -123,8 +123,7 @@ namespace LiarsBatting.Network
         private static readonly string[] ProgressFieldPaths = { "progress", "level", "title" };
 
         // A finished match: XP, level, challenges, and (online only) the record against people.
-        // onFailed: the profile couldn't be loaded, so nothing was earned or saved (the result popup says so
-        // instead of waiting forever on "경험치 계산 중...").
+        // Completion is reported only after saving; a load or save failure reaches onFailed.
         public void SettleMatch(string nickname, MatchStats stats, Action<MatchSettlement> onSettled,
             Action<string> onFailed = null)
         {
@@ -153,16 +152,15 @@ namespace LiarsBatting.Network
                     fields["draws"] = FirestoreClient.IntField(profile.Draws);
                     paths.Add("draws");
                 }
-                _db.PatchFields(PathOf(nickname), fields, paths.ToArray(), null, error =>
+                _db.PatchFields(PathOf(nickname), fields, paths.ToArray(), () => onSettled?.Invoke(settlement), error =>
                 {
                     Debug.LogWarning($"진행도 저장 실패: {error}");
                     // The local copy already counts this match but the server doesn't. Drop it so the next use
                     // reloads the server's numbers: left as is, the NEXT save would claim two wins at once and
                     // be refused by firestore.rules (a record may only grow by one per save).
                     if (Current == profile) Current = null;
+                    onFailed?.Invoke(error);
                 });
-
-                onSettled?.Invoke(settlement);
             }, error =>
             {
                 Debug.LogWarning($"진행도 저장 실패(프로필 읽기): {error}");

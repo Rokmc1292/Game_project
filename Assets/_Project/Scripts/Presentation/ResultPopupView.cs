@@ -1,5 +1,7 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using LiarsBatting.Progression;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -15,6 +17,7 @@ namespace LiarsBatting.Presentation
     // Art lives in Resources/Result: result_panel (9-sliced), result_title_win, result_title_lose.
     public class ResultPopupView
     {
+        private enum Outcome { Win, Lose, Draw }
         // ---- timing knobs (seconds / pixels) ----
         private const float DimDuration = 0.5f;
         private const float PanelDelay = 0.1f;
@@ -52,6 +55,13 @@ namespace LiarsBatting.Presentation
         private readonly Text _rematchStatus;
         private readonly Button _rematchButton;
         private Coroutine _routine;
+        private Coroutine _progressRoutine;
+        private readonly List<string> _progressSounds = new List<string>();
+        private bool _introComplete;
+        private bool _settlementReceived;
+
+        public bool IsVisible => Root.gameObject.activeInHierarchy;
+        public bool IntroComplete => _introComplete;
 
         // onRematch: the 리매치 button, only shown on a draw (see ShowDraw).
         public ResultPopupView(Transform parent, MonoBehaviour host, Action onMainMenu, Action onRematch = null)
@@ -157,13 +167,58 @@ namespace LiarsBatting.Presentation
 
         public void SetSummary(string text) => _summary.text = text;
 
+        public void Hide()
+        {
+            if (_routine != null) _host.StopCoroutine(_routine);
+            if (_progressRoutine != null) _host.StopCoroutine(_progressRoutine);
+            _routine = null;
+            _progressRoutine = null;
+            _progressSounds.Clear();
+            GameAudio.StopProgressEffects();
+            Root.gameObject.SetActive(false);
+        }
+
+        public void SetSettlement(MatchSettlement settlement)
+        {
+            if (!IsVisible || _settlementReceived || settlement == null) return;
+            _settlementReceived = true;
+            // Limit a busy settlement to a representative achievement and one unlock.
+            if (settlement.LevelAfter > settlement.LevelBefore)
+                _progressSounds.Add("SFX_Progress_LevelUp");
+            else if (settlement.HeroLevelAfter > settlement.HeroLevelBefore)
+                _progressSounds.Add("SFX_Progress_HeroLevelUp");
+            else if (settlement.Completed.Count > 0 || settlement.HeroCompleted.Count > 0)
+                _progressSounds.Add("SFX_Progress_ChallengeComplete");
+            if (settlement.NewRewards.Count > 0) _progressSounds.Add("SFX_Progress_RewardUnlock");
+            StartProgressSounds();
+        }
+
+        private void StartProgressSounds()
+        {
+            if (_introComplete && IsVisible && _progressSounds.Count > 0 && _progressRoutine == null)
+                _progressRoutine = _host.StartCoroutine(PlayProgressSounds());
+        }
+
+        private IEnumerator PlayProgressSounds()
+        {
+            foreach (string name in _progressSounds)
+            {
+                if (!IsVisible) break;
+                GameAudio.Play(name);
+                yield return new WaitForSecondsRealtime(GameAudio.Duration(name) + 0.15f);
+            }
+            _progressSounds.Clear();
+            _progressRoutine = null;
+        }
+
         // digits: the secret to show as cards (null = no cards, e.g. the opponent's secret isn't known online).
-        public void Show(bool won, string message, int[] digits) => Present(won, false, false, message, digits);
+        public void Show(bool won, string message, int[] digits)
+            => Present(won ? Outcome.Win : Outcome.Lose, false, message, digits);
 
         // A draw: lettered title, and a 리매치 button next to 메인 메뉴로. Online, the rematch needs the
         // opponent's answer too (SetRematchStatus tells how that is going); against the AI it is instant.
         public void ShowDraw(string message, int[] digits, bool rematchOnline)
-            => Present(true, true, rematchOnline, message, digits);
+            => Present(Outcome.Draw, rematchOnline, message, digits);
 
         // Updates the rematch line and the button: waiting for the answer, declined, timed out...
         public void SetRematchStatus(string text, bool canRequest)
@@ -173,9 +228,13 @@ namespace LiarsBatting.Presentation
             _rematchButton.interactable = canRequest;
         }
 
-        private void Present(bool won, bool draw, bool online, string message, int[] digits)
+        private void Present(Outcome outcome, bool online, string message, int[] digits)
         {
-            if (_routine != null) _host.StopCoroutine(_routine);
+            Hide();
+            _introComplete = false;
+            _settlementReceived = false;
+            bool draw = outcome == Outcome.Draw;
+            bool won = outcome == Outcome.Win;
 
             _drawTitle.gameObject.SetActive(draw);
             _title.enabled = !draw;
@@ -205,14 +264,14 @@ namespace LiarsBatting.Presentation
             Root.gameObject.SetActive(true);
             Root.SetAsLastSibling();
             GameAudio.Play("SFX_Result_Dim_Drop");
-            _routine = _host.StartCoroutine(PlayIntro(won, hasDigits ? digits : null));
+            _routine = _host.StartCoroutine(PlayIntro(outcome, hasDigits ? digits : null));
         }
 
-        private IEnumerator PlayIntro(bool won, int[] digits)
+        private IEnumerator PlayIntro(Outcome outcome, int[] digits)
         {
             bool hasDigits = digits != null;
-            float stampAt = won ? StampDelayWin : StampDelayLose;
-            float shakeAmp = won ? ShakePixelsWin : ShakePixelsLose;
+            float stampAt = outcome == Outcome.Lose ? StampDelayLose : StampDelayWin;
+            float shakeAmp = outcome == Outcome.Lose ? ShakePixelsLose : ShakePixelsWin;
             float messageAt = stampAt + 0.45f;
             float cardsAt = messageAt + 0.5f;
             float buttonAt = hasDigits ? cardsAt + 3 * CardStep + CardFlipDuration + 0.1f : cardsAt;
@@ -223,11 +282,17 @@ namespace LiarsBatting.Presentation
             int nextCardSound = 0;
             while (t < total)
             {
+                if (!IsVisible)
+                {
+                    _routine = null;
+                    yield break;
+                }
                 t += Time.unscaledDeltaTime;
                 if (!stampPlayed && t >= stampAt + StampDuration)
                 {
                     stampPlayed = true;
-                    GameAudio.Play(won ? "SFX_Result_Stamp_Win" : "SFX_Result_Stamp_Lose");
+                    GameAudio.Play(outcome == Outcome.Draw ? "SFX_Result_Stamp_Draw" :
+                        outcome == Outcome.Win ? "SFX_Result_Stamp_Win" : "SFX_Result_Stamp_Lose");
                 }
                 if (hasDigits && nextCardSound < 4 && t >= cardsAt + nextCardSound * CardStep)
                 {
@@ -287,6 +352,8 @@ namespace LiarsBatting.Presentation
             _buttonGroup.interactable = true;
             _buttonGroup.blocksRaycasts = true;
             _routine = null;
+            _introComplete = true;
+            StartProgressSounds();
         }
 
         private static float Seg(float t, float start, float duration)

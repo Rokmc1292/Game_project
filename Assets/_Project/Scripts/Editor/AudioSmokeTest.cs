@@ -1,10 +1,14 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using LiarsBatting.Core;
+using LiarsBatting.AI;
 using LiarsBatting.Presentation;
 using UnityEditor;
+using UnityEditor.Build.Player;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -29,9 +33,10 @@ namespace LiarsBatting.Editor
         static AudioSmokeTest()
         {
             if (!SessionState.GetBool(SessionKey, false)) return;
-            _deadline = EditorApplication.timeSinceStartup + 45;
+            _deadline = EditorApplication.timeSinceStartup + 180;
             _step = SessionState.GetBool(StartedKey, false) ? 0 : -1;
             _stepStarted = EditorApplication.timeSinceStartup;
+            AudioUpgradeTests.ConfigureOffline();
             EditorApplication.update += Tick;
         }
 
@@ -40,11 +45,27 @@ namespace LiarsBatting.Editor
             AudioCatalogBuilder.RebuildCatalog();
             SessionState.SetBool(SessionKey, true);
             SessionState.EraseBool(StartedKey);
-            _deadline = EditorApplication.timeSinceStartup + 45;
+            _deadline = EditorApplication.timeSinceStartup + 180;
             _step = -1;
             _timeouts = 0;
             _stepStarted = EditorApplication.timeSinceStartup;
+            AudioUpgradeTests.ConfigureOffline();
             EditorApplication.update += Tick;
+        }
+
+        public static void CompilePlayer()
+        {
+            AudioCatalogBuilder.RebuildCatalog();
+            var settings = new ScriptCompilationSettings
+            {
+                target = BuildTarget.StandaloneWindows64,
+                group = BuildTargetGroup.Standalone,
+                subtarget = (int)StandaloneBuildSubtarget.Player
+            };
+            var result = PlayerBuildInterface.CompilePlayerScripts(settings, "Library/AudioValidationPlayer");
+            if (result.assemblies == null || !result.assemblies.Any(path => Path.GetFileName(path) == "Assembly-CSharp.dll"))
+                throw new InvalidOperationException("Player script compilation did not produce the game assembly.");
+            Debug.Log($"Audio player script compilation passed: {result.assemblies.Count()} assemblies.");
         }
 
         private static void Tick()
@@ -136,28 +157,56 @@ namespace LiarsBatting.Editor
                         if (_timeouts == 0 && EditorApplication.timeSinceStartup - _stepStarted < 8) break;
                         Require(_timeouts == 1 && HasClip(sources, "SFX_Timer_Timeout"),
                             "Expired timer did not emit a timeout.");
-                        Invoke(game, "StartAiMatch");
+                        Invoke(game, "StartAiMatch", AiDifficulty.Beginner);
                         Invoke(game, "OnHeroChosen", HeroId.Paladin);
                         Invoke(game, "OnSecretChosen", new[] { 0, 1, 2, 3 });
                         Require(MusicName(audio) == "BGM_Match_Tension", "Match music was not selected.");
                         GameAudio.Play("SFX_Hero_Paladin_Restore");
                         Require(HasClip(sources, "SFX_Hero_Paladin_Restore"), "Hero sound was not selected.");
-                        Debug.Log("Audio smoke test passed: settings, lobby, match, effects, timer cancellation and timeout.");
-                        SessionState.EraseBool(SessionKey);
-                        SessionState.EraseBool(StartedKey);
-                        EditorApplication.update -= Tick;
-                        EditorApplication.Exit(0);
+                        _step = 3;
+                        audio.StartCoroutine(RunUpgradeTests(game, audio));
                         break;
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
-                SessionState.EraseBool(SessionKey);
-                SessionState.EraseBool(StartedKey);
-                EditorApplication.update -= Tick;
-                EditorApplication.Exit(1);
+                Finish(ex);
             }
+        }
+
+        private static IEnumerator RunUpgradeTests(GameBootstrap game, GameAudio audio)
+        {
+            var tests = AudioUpgradeTests.Run(game, audio);
+            while (true)
+            {
+                object wait = null;
+                bool more = false;
+                Exception failure = null;
+                try
+                {
+                    more = tests.MoveNext();
+                    if (more) wait = tests.Current;
+                }
+                catch (Exception ex) { failure = ex; }
+                if (failure != null || !more)
+                {
+                    (tests as IDisposable)?.Dispose();
+                    Finish(failure);
+                    yield break;
+                }
+                yield return wait;
+            }
+        }
+
+        private static void Finish(Exception failure)
+        {
+            if (failure != null) Debug.LogException(failure);
+            else Debug.Log("Audio smoke test passed: settings, timer cancellation, timeout, and upgraded audio integration.");
+            GameBootstrap.EditorFirestoreFactory = null;
+            SessionState.EraseBool(SessionKey);
+            SessionState.EraseBool(StartedKey);
+            EditorApplication.update -= Tick;
+            EditorApplication.Exit(failure == null ? 0 : 1);
         }
 
         private static string MusicName(GameAudio audio)

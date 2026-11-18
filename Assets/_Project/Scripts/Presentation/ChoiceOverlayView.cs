@@ -21,6 +21,7 @@ namespace LiarsBatting.Presentation
         private bool _hideHistoryNext;
         private Action _pendingBack;
         private Action _backAction;
+        private bool _playNextClickSound = true;
 
         public ChoiceOverlayView(Transform parent)
         {
@@ -89,6 +90,8 @@ namespace LiarsBatting.Presentation
             _pendingBack = onBack;
         }
 
+        public void SuppressNextClickSound() => _playNextClickSound = false;
+
         private void OnBackClicked()
         {
             _root.SetActive(false);
@@ -154,6 +157,8 @@ namespace LiarsBatting.Presentation
         public Button[] ShowWithContent(string message, Action<RectTransform> buildContent,
             params (string label, Color color, Action onClick)[] options)
         {
+            bool playClickSound = _playNextClickSound;
+            _playNextClickSound = true;
             if (_historyRow != null) _historyRow.gameObject.SetActive(!_hideHistoryNext);
             _hideHistoryNext = false;
             _backAction = _pendingBack;
@@ -185,7 +190,7 @@ namespace LiarsBatting.Presentation
                 {
                     _root.SetActive(false);
                     onClick?.Invoke();
-                }, 15);
+                }, 15, playClickSound);
                 UiFactory.SetSize(button, Mathf.Max(130f, option.label.Length * 11f + 64f), 48f);
                 MenuButtonStyle.ApplyChoice(button, option.color);
                 buttons[o] = button;

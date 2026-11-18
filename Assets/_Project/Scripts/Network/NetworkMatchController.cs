@@ -74,6 +74,7 @@ namespace LiarsBatting.Network
         // Whichever side ends up writing the turn-ending action (could be either
         // side, depending on who was caught) checks this before flipping.
         private bool _warriorKeepTurn;
+        public bool KeepsCurrentTurn => _warriorKeepTurn;
 
         private string PlayerA => MySide == MatchSide.A ? _myNickname : OpponentNickname;
         private string PlayerB => MySide == MatchSide.A ? OpponentNickname : _myNickname;
