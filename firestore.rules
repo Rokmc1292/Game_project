@@ -46,6 +46,12 @@ service cloud.firestore {
     }
 
     // ---------- matches/{matchId}: one online match ----------
+    function isResultSecret(d, field) {
+      return !d.keys().hasAny([field])
+        || (d.get('status', '') == 'finished'
+          && d[field] is string && d[field].matches('^[0-9]{4}$'));
+    }
+
     match /matches/{matchId} {
       allow read: if true;
       allow create, update: if request.resource.data.keys().hasOnly([
@@ -56,7 +62,9 @@ service cloud.firestore {
           'priestPosition', 'priestGuessDigit', 'priestAnswerBool',
           'wizardUserSide', 'wizardUserIndex', 'wizardUserDigit',
           'wizardResponderSide', 'wizardResponderIndex', 'wizardResponderDigit',
-          'rematchA', 'rematchB', 'nextMatchId'])
+          'rematchA', 'rematchB', 'nextMatchId', 'resultSecretA', 'resultSecretB'])
+        && isResultSecret(request.resource.data, 'resultSecretA')
+        && isResultSecret(request.resource.data, 'resultSecretB')
         && request.resource.data.get('playerA', '') is string && request.resource.data.get('playerA', '').size() <= 20
         && request.resource.data.get('playerB', '') is string && request.resource.data.get('playerB', '').size() <= 20;
       allow delete: if false;   // the game never deletes matches

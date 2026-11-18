@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using LiarsBatting.Core;
 using LiarsBatting.Progression;
 using UnityEngine;
 using UnityEngine.UI;
@@ -48,6 +49,7 @@ namespace LiarsBatting.Presentation
         private readonly CanvasGroup _messageGroup;
         private readonly Text _summary;
         private readonly RevealedDigitsRow _digits;
+        private readonly Text _digitsUnavailable;
         private readonly CanvasGroup _buttonGroup;
         private readonly Sprite _winTitle;
         private readonly Sprite _loseTitle;
@@ -59,6 +61,7 @@ namespace LiarsBatting.Presentation
         private readonly List<string> _progressSounds = new List<string>();
         private bool _introComplete;
         private bool _settlementReceived;
+        private int[] _displayDigits;
 
         public bool IsVisible => Root.gameObject.activeInHierarchy;
         public bool IntroComplete => _introComplete;
@@ -133,6 +136,11 @@ namespace LiarsBatting.Presentation
 
             _digits = new RevealedDigitsRow(content, 58f, 81f, 12f);
             UiFactory.SetFlexible(_digits.Root, 1, 0);
+            _digitsUnavailable = UiFactory.Text(content, "상대 숫자를 확인할 수 없습니다", 16,
+                UITheme.Muted, TextAnchor.MiddleCenter);
+            _digitsUnavailable.raycastTarget = false;
+            UiFactory.SetHeight(_digitsUnavailable, 81f);
+            _digitsUnavailable.gameObject.SetActive(false);
 
             // XP / level / challenge summary, filled in by SetSummary once the match is settled.
             _summary = UiFactory.Text(content, "", 14, new Color32(214, 160, 70, 255), TextAnchor.MiddleCenter, FontStyle.Bold);
@@ -166,6 +174,24 @@ namespace LiarsBatting.Presentation
         }
 
         public void SetSummary(string text) => _summary.text = text;
+
+        public void SetOpponentDigits(int[] digits)
+        {
+            if (!IsVisible || !Judge.IsValidSecret(digits)) return;
+            _displayDigits = (int[])digits.Clone();
+            _digitsUnavailable.gameObject.SetActive(false);
+            _digits.Root.gameObject.SetActive(true);
+            if (!_introComplete) return;
+            _digits.ShowDigits(_displayDigits);
+            for (int i = 0; i < Judge.Digits; i++) _digits.Slot(i).rectTransform.localScale = Vector3.one;
+        }
+
+        public void SetDigitsUnavailable()
+        {
+            if (!IsVisible || _displayDigits != null) return;
+            _digits.Root.gameObject.SetActive(false);
+            _digitsUnavailable.gameObject.SetActive(true);
+        }
 
         public void Hide()
         {
@@ -211,14 +237,14 @@ namespace LiarsBatting.Presentation
             _progressRoutine = null;
         }
 
-        // digits: the secret to show as cards (null = no cards, e.g. the opponent's secret isn't known online).
-        public void Show(bool won, string message, int[] digits)
-            => Present(won ? Outcome.Win : Outcome.Lose, false, message, digits);
+        // Online results can reserve unknown cards until the post-match exchange completes.
+        public void Show(bool won, string message, int[] digits, bool waitForDigits = false)
+            => Present(won ? Outcome.Win : Outcome.Lose, false, message, digits, waitForDigits);
 
         // A draw: lettered title, and a 리매치 button next to 메인 메뉴로. Online, the rematch needs the
         // opponent's answer too (SetRematchStatus tells how that is going); against the AI it is instant.
-        public void ShowDraw(string message, int[] digits, bool rematchOnline)
-            => Present(Outcome.Draw, rematchOnline, message, digits);
+        public void ShowDraw(string message, int[] digits, bool rematchOnline, bool waitForDigits = false)
+            => Present(Outcome.Draw, rematchOnline, message, digits, waitForDigits);
 
         // Updates the rematch line and the button: waiting for the answer, declined, timed out...
         public void SetRematchStatus(string text, bool canRequest)
@@ -228,7 +254,7 @@ namespace LiarsBatting.Presentation
             _rematchButton.interactable = canRequest;
         }
 
-        private void Present(Outcome outcome, bool online, string message, int[] digits)
+        private void Present(Outcome outcome, bool online, string message, int[] digits, bool waitForDigits)
         {
             Hide();
             _introComplete = false;
@@ -246,7 +272,9 @@ namespace LiarsBatting.Presentation
             _rematchStatus.gameObject.SetActive(_rematchStatus.text.Length > 0);
             _message.text = message;
             _summary.text = "";
-            bool hasDigits = digits != null && digits.Length == 4;
+            _displayDigits = Judge.IsValidSecret(digits) ? (int[])digits.Clone() : null;
+            bool hasDigits = _displayDigits != null || waitForDigits;
+            _digitsUnavailable.gameObject.SetActive(false);
             _digits.Root.gameObject.SetActive(hasDigits);
 
             // starting pose (set before the first frame so nothing flashes)
@@ -264,12 +292,11 @@ namespace LiarsBatting.Presentation
             Root.gameObject.SetActive(true);
             Root.SetAsLastSibling();
             GameAudio.Play("SFX_Result_Dim_Drop");
-            _routine = _host.StartCoroutine(PlayIntro(outcome, hasDigits ? digits : null));
+            _routine = _host.StartCoroutine(PlayIntro(outcome, hasDigits));
         }
 
-        private IEnumerator PlayIntro(Outcome outcome, int[] digits)
+        private IEnumerator PlayIntro(Outcome outcome, bool hasDigits)
         {
-            bool hasDigits = digits != null;
             float stampAt = outcome == Outcome.Lose ? StampDelayLose : StampDelayWin;
             float shakeAmp = outcome == Outcome.Lose ? ShakePixelsLose : ShakePixelsWin;
             float messageAt = stampAt + 0.45f;
@@ -294,7 +321,7 @@ namespace LiarsBatting.Presentation
                     GameAudio.Play(outcome == Outcome.Draw ? "SFX_Result_Stamp_Draw" :
                         outcome == Outcome.Win ? "SFX_Result_Stamp_Win" : "SFX_Result_Stamp_Lose");
                 }
-                if (hasDigits && nextCardSound < 4 && t >= cardsAt + nextCardSound * CardStep)
+                if (hasDigits && _displayDigits != null && nextCardSound < 4 && t >= cardsAt + nextCardSound * CardStep)
                 {
                     GameAudio.Play("SFX_Result_Card_Reveal");
                     nextCardSound++;
@@ -322,8 +349,9 @@ namespace LiarsBatting.Presentation
                     {
                         float f = Seg(t, cardsAt + i * CardStep, CardFlipDuration);
                         var slot = _digits.Slot(i);
-                        slot.sprite = f < 0.5f ? CardArt.Unknown() : CardArt.Digit(digits[i]);
-                        slot.rectTransform.localScale = new Vector3(Mathf.Abs(1f - 2f * f), 1f, 1f);
+                        slot.sprite = f < 0.5f || _displayDigits == null ? CardArt.Unknown() : CardArt.Digit(_displayDigits[i]);
+                        slot.rectTransform.localScale = _displayDigits == null ? Vector3.one :
+                            new Vector3(Mathf.Abs(1f - 2f * f), 1f, 1f);
                     }
                 }
 
@@ -345,7 +373,7 @@ namespace LiarsBatting.Presentation
             _messageGroup.alpha = 1f;
             if (hasDigits)
             {
-                _digits.ShowDigits(digits);
+                if (_displayDigits != null) _digits.ShowDigits(_displayDigits);
                 for (int i = 0; i < 4; i++) _digits.Slot(i).rectTransform.localScale = Vector3.one;
             }
             _buttonGroup.alpha = 1f;

@@ -446,6 +446,8 @@ namespace LiarsBatting.Editor
         public readonly List<(Action success, Action<string> failure)> HeldProfileWrites =
             new List<(Action, Action<string>)>();
         public bool HoldProfileWrites;
+        public bool RejectResultSecretWrites;
+        public int ResultSecretWrites { get; private set; }
         public int Requests { get; private set; }
 
         public MemoryFirestore(MonoBehaviour host) : base(host) => _host = host;
@@ -474,6 +476,17 @@ namespace LiarsBatting.Editor
                 onSuccess?.Invoke();
             }
             Requests++;
+            if (fieldPaths.Any(field => field == "resultSecretA" || field == "resultSecretB"))
+            {
+                ResultSecretWrites++;
+                bool finished = _documents.TryGetValue(path, out var match) &&
+                    (string)match["fields"]?["status"]?["stringValue"] == "finished";
+                if (RejectResultSecretWrites || !finished)
+                {
+                    _host.StartCoroutine(Deferred(() => onError?.Invoke("simulated result-secret permission denied")));
+                    return;
+                }
+            }
             if (HoldProfileWrites && path.StartsWith("players/"))
                 HeldProfileWrites.Add((Commit, onError));
             else

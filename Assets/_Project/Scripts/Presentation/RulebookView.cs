@@ -127,7 +127,7 @@ namespace LiarsBatting.Presentation
             Example(body, "아웃", OutRed, "같은 숫자가 하나도 없음 (불이 모두 꺼집니다)", secret, new[] { 5, 6, 7, 8 }, new JudgeResult(0, 0));
             Example(body, "함께 나오는 경우", Brass, "스트라이크와 볼이 함께 나올 수도 있습니다", secret, new[] { 1, 3, 5, 2 }, new JudgeResult(1, 2));
 
-            Line(body, "위 줄 초록 불 = 볼, 아래 줄 주황 불 = 스트라이크.  4스트라이크면 정답입니다.", UITheme.Muted, 13);
+            Line(body, "초록 볼 4개 · 주황 스트라이크 3개. 4스트라이크는 공 대신 정답으로 표시합니다.", UITheme.Muted, 13);
         }
 
         // One worked example: a coloured name chip + the rule, then "비밀번호 [cards]  추측 [cards]  결과 [lamps]".

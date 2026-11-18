@@ -5,7 +5,7 @@ using LiarsBatting.Core;
 
 namespace LiarsBatting.Presentation
 {
-    // A judge result drawn as two rows of four round lamps instead of "1S 2B" text:
+    // Four ball lamps and three strike lamps; a solved secret is a separate verdict.
     // the top row counts balls (green), the bottom row strikes (orange), each lit from the left.
     // Nothing lit = no strike and no ball. The same layout is used to show a result and to
     // pick one (BuildPicker), so what the defender sets is exactly what the guesser sees.
@@ -42,6 +42,15 @@ namespace LiarsBatting.Presentation
         // compact history rows.
         public static RectTransform Build(Transform parent, JudgeResult result, float size = 22f, bool labels = true)
         {
+            if (result.IsWin)
+            {
+                var solved = UiFactory.Text(parent, "정답", Mathf.RoundToInt(size), UITheme.StrikeLamp,
+                    TextAnchor.MiddleCenter, FontStyle.Bold);
+                solved.name = "SolvedResult";
+                solved.raycastTarget = false;
+                UiFactory.SetSize(solved, GridWidth(size, labels), size * 2 + Mathf.Max(2f, Mathf.Round(size * 0.25f)));
+                return (RectTransform)solved.transform;
+            }
             var grid = Grid(parent, size, labels, out var ballLamps, out var strikeLamps);
             Paint(ballLamps, result.Ball, UITheme.BallLamp);
             Paint(strikeLamps, result.Strike, UITheme.StrikeLamp);
@@ -55,7 +64,8 @@ namespace LiarsBatting.Presentation
             Action<JudgeResult> onChanged)
         {
             var grid = Grid(parent, size, true, out var ballLamps, out var strikeLamps);
-            int balls = start.Ball, strikes = start.Strike;
+            int balls = Mathf.Clamp(start.Ball, 0, ballLamps.Length);
+            int strikes = Mathf.Clamp(start.Strike, 0, strikeLamps.Length);
 
             void Repaint()
             {
@@ -101,17 +111,20 @@ namespace LiarsBatting.Presentation
             var grid = UiFactory.VerticalGroup(parent, "ResultLamps", spacing: rowGap, childAlign: TextAnchor.MiddleCenter);
             grid.GetComponent<VerticalLayoutGroup>().childForceExpandWidth = false;
 
-            ballLamps = Row(grid, "볼", UITheme.BallLamp, size, labels);
-            strikeLamps = Row(grid, "스트라이크", UITheme.StrikeLamp, size, labels);
+            ballLamps = Row(grid, "볼", UITheme.BallLamp, size, labels, Judge.Digits);
+            strikeLamps = Row(grid, "스트라이크", UITheme.StrikeLamp, size, labels, Judge.Digits - 1);
 
-            float lampGap = Mathf.Max(2f, Mathf.Round(size * 0.3f));
-            float width = size * Judge.Digits + lampGap * (Judge.Digits - 1)
-                + (labels ? 2 * (LabelWidth + lampGap) : 0f);
-            UiFactory.SetSize(grid, width, size * 2 + rowGap);
+            UiFactory.SetSize(grid, GridWidth(size, labels), size * 2 + rowGap);
             return grid;
         }
 
-        private static Image[] Row(Transform grid, string label, Color labelColor, float size, bool labels)
+        private static float GridWidth(float size, bool labels)
+        {
+            float gap = Mathf.Max(2f, Mathf.Round(size * 0.3f));
+            return size * Judge.Digits + gap * (Judge.Digits - 1) + (labels ? 2 * (LabelWidth + gap) : 0f);
+        }
+
+        private static Image[] Row(Transform grid, string label, Color labelColor, float size, bool labels, int count)
         {
             float lampGap = Mathf.Max(2f, Mathf.Round(size * 0.3f));
             var row = UiFactory.HorizontalGroup(grid, "Row_" + label, spacing: lampGap, childAlign: TextAnchor.MiddleCenter);
@@ -124,7 +137,7 @@ namespace LiarsBatting.Presentation
                 UiFactory.SetSize(text, LabelWidth, size);
             }
 
-            var lamps = new Image[Judge.Digits];
+            var lamps = new Image[count];
             for (int i = 0; i < lamps.Length; i++) lamps[i] = MakeLamp(row, size);
 
             if (labels)

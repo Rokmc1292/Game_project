@@ -16,11 +16,11 @@ namespace LiarsBatting.Network
     // back" -- every Submit* call bumps its LOCAL seq the moment it writes, so
     // the poll loop only ever reacts to a seq higher than what it already knows.
     //
-    // Nobody's raw secret is ever written to Firestore. A defender keeps the
+    // During play nobody's raw secret is written to Firestore. A defender keeps the
     // true result of the attacker's guess in local memory only (_myTrueResult)
     // and uses it later purely to judge a challenge -- the shared document only
     // ever carries the (possibly false) REPORTED result and single revealed
-    // digits, exactly what the local AI-mode UI already limits the player to.
+    // digits. Full secrets are exchanged only after the server document is finished.
     public class NetworkMatchController
     {
         private const float PollIntervalSeconds = 0.5f;
@@ -35,6 +35,8 @@ namespace LiarsBatting.Network
         public MatchSide CurrentAttacker => _turnAttacker;
 
         private Coroutine _pollRoutine;
+        private Coroutine _resultRevealRoutine;
+        private int _resultRevealSession;
         private long _lastSeq;
 
         // ---- presence (disconnect detection) ----
@@ -171,6 +173,12 @@ namespace LiarsBatting.Network
 
         public void Stop()
         {
+            _resultRevealSession++;
+            if (_resultRevealRoutine != null)
+            {
+                _host.StopCoroutine(_resultRevealRoutine);
+                _resultRevealRoutine = null;
+            }
             StopRematchVote();
             if (_pollRoutine != null)
             {
@@ -183,6 +191,77 @@ namespace LiarsBatting.Network
                 _presenceRoutine = null;
                 _db.DeleteDocument(PresencePath(MySide), null, null);   // tidy up; nothing depends on it
             }
+        }
+
+        // A separate, field-masked exchange cannot overwrite the finished action or rematch votes.
+        // Old rules/clients or a disconnected peer may not supply digits; never substitute my secret.
+        public void BeginResultReveal(int[] mySecret, Action<int[]> onRevealed, Action onUnavailable)
+        {
+            if (_resultRevealRoutine != null) _host.StopCoroutine(_resultRevealRoutine);
+            int session = ++_resultRevealSession;
+            var secret = Judge.IsValidSecret(mySecret) ? (int[])mySecret.Clone() : null;
+            _resultRevealRoutine = _host.StartCoroutine(ResultRevealLoop(session, secret, onRevealed, onUnavailable));
+        }
+
+        private IEnumerator ResultRevealLoop(int session, int[] mySecret, Action<int[]> onRevealed, Action onUnavailable)
+        {
+            float deadline = Time.realtimeSinceStartup + 15f;
+            bool published = mySecret == null;
+            bool IsCurrent() => session == _resultRevealSession && Time.realtimeSinceStartup < deadline;
+            while (IsCurrent())
+            {
+                JObject document = null;
+                string error = null;
+                bool completed = false;
+                _db.GetDocument(DocPath, doc => { document = doc; completed = true; },
+                    message => { error = message; completed = true; });
+                while (!completed && IsCurrent()) yield return null;
+                if (!IsCurrent()) break;
+                if (error != null) break;
+
+                if (document != null && FirestoreClient.ReadString(document, "status", "") == "finished")
+                {
+                    if (!published)
+                    {
+                        string field = MySide == MatchSide.A ? "resultSecretA" : "resultSecretB";
+                        completed = false;
+                        _db.PatchFields(DocPath,
+                            new JObject { [field] = FirestoreClient.StringField(EncodeGuess(mySecret)) },
+                            new[] { field }, () => completed = true,
+                            message => { error = message; completed = true; });
+                        while (!completed && IsCurrent()) yield return null;
+                        if (!IsCurrent() || error != null) break;
+                        published = true;
+                    }
+                    string otherField = MySide == MatchSide.A ? "resultSecretB" : "resultSecretA";
+                    string encoded = FirestoreClient.ReadString(document, otherField, "");
+                    if (TryDecodeResultSecret(encoded, out var digits))
+                    {
+                        _resultRevealRoutine = null;
+                        onRevealed?.Invoke(digits);
+                        yield break;
+                    }
+                }
+                yield return new WaitForSecondsRealtime(PollIntervalSeconds);
+            }
+            if (session != _resultRevealSession) yield break;
+            _resultRevealRoutine = null;
+            onUnavailable?.Invoke();
+        }
+
+        private static bool TryDecodeResultSecret(string encoded, out int[] digits)
+        {
+            digits = null;
+            if (encoded == null || encoded.Length != Judge.Digits) return false;
+            var decoded = new int[Judge.Digits];
+            for (int i = 0; i < decoded.Length; i++)
+            {
+                if (encoded[i] < '0' || encoded[i] > '9') return false;
+                decoded[i] = encoded[i] - '0';
+            }
+            if (!Judge.IsValidSecret(decoded)) return false;
+            digits = decoded;
+            return true;
         }
 
         private string PresencePath(MatchSide side) => $"matchPresence/{_matchId}_{SideKey(side)}";

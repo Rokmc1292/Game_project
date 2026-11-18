@@ -176,26 +176,29 @@ namespace LiarsBatting.Editor
 
         private static IEnumerator RunUpgradeTests(GameBootstrap game, GameAudio audio)
         {
-            var tests = AudioUpgradeTests.Run(game, audio);
-            while (true)
+            foreach (var tests in new[] { AudioUpgradeTests.Run(game, audio), ResultRulesTests.Run(game) })
             {
-                object wait = null;
-                bool more = false;
-                Exception failure = null;
-                try
+                while (true)
                 {
-                    more = tests.MoveNext();
-                    if (more) wait = tests.Current;
+                    object wait = null;
+                    bool more = false;
+                    Exception failure = null;
+                    try
+                    {
+                        more = tests.MoveNext();
+                        if (more) wait = tests.Current;
+                    }
+                    catch (Exception ex) { failure = ex; }
+                    if (failure != null || !more)
+                    {
+                        (tests as IDisposable)?.Dispose();
+                        if (failure != null) { Finish(failure); yield break; }
+                        break;
+                    }
+                    yield return wait;
                 }
-                catch (Exception ex) { failure = ex; }
-                if (failure != null || !more)
-                {
-                    (tests as IDisposable)?.Dispose();
-                    Finish(failure);
-                    yield break;
-                }
-                yield return wait;
             }
+            Finish(null);
         }
 
         private static void Finish(Exception failure)

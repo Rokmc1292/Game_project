@@ -1372,13 +1372,30 @@ namespace LiarsBatting.Presentation
             _choiceOverlay.Hide();   // a decision popup still open when the match ends must not linger behind the result
             _surrenderButton.gameObject.SetActive(false);
             GameAudio.ResultMusic(won);
-            // A win by guessing leaves the opponent's secret unknown here, so only show its cards when
-            // every digit has been opened; a defeat always shows my own secret.
-            int[] cards = won ? (AllRevealed(_state.AiRevealed) ? _state.AiSecret : null) : _state.PlayerSecret;
+            int[] cards = AllRevealed(_state.AiRevealed) && Judge.IsValidSecret(_state.AiSecret) ? _state.AiSecret : null;
             _resultPopup.Show(won,
                 message ?? (won ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
-                cards);
+                cards, waitForDigits: cards == null);
+            ReceiveOnlineResultSecret(cards != null);
             SettleMatch(won);
+        }
+
+        private void ReceiveOnlineResultSecret(bool alreadyKnown)
+        {
+            var network = _network;
+            if (network == null) return;
+            int session = _matchSession;
+            bool IsCurrent() => session == _matchSession && _network == network &&
+                _matchOver && _resultPopup.IsVisible;
+            network.BeginResultReveal(_state.PlayerSecret, digits =>
+            {
+                if (!IsCurrent()) return;
+                _state.AiSecret = digits;
+                _resultPopup.SetOpponentDigits(digits);
+            }, () =>
+            {
+                if (IsCurrent() && !alreadyKnown) _resultPopup.SetDigitsUnavailable();
+            });
         }
 
         // XP, level, challenges and (online) the record against people -- once per match, after the
@@ -3122,7 +3139,7 @@ namespace LiarsBatting.Presentation
         private void PromptFakeLamps(JudgeResult trueResult, Action<JudgeResult, bool> onChoice)
         {
             var allFakes = Judge.PlausibleFakeResults(trueResult);
-            JudgeResult current = trueResult;
+            JudgeResult current = trueResult.IsWin ? new JudgeResult(Judge.Digits - 1, 0) : trueResult;
             Text status = null;
             Button[] buttons = null;
 
@@ -3143,7 +3160,7 @@ namespace LiarsBatting.Presentation
             buttons = _choiceOverlay.ShowWithContent("거짓말: 상대에게 보여줄 결과를 만드세요",
                 slot =>
                 {
-                    ResultLamps.BuildPicker(slot, trueResult, 36f, result => { current = result; Validate(); });
+                    ResultLamps.BuildPicker(slot, current, 36f, result => { current = result; Validate(); });
                     status = UiFactory.Text(slot, "", 13, UITheme.Ink, TextAnchor.MiddleCenter);
                     UiFactory.SetSize(status, 420, 20);
                 },
@@ -3340,7 +3357,9 @@ namespace LiarsBatting.Presentation
             _surrenderButton.gameObject.SetActive(false);
             GameAudio.ResultMusic(false, draw: true);
             _rematchAnswered = false;
-            _resultPopup.ShowDraw(message, _state.PlayerSecret, rematchOnline: true);
+            int[] cards = AllRevealed(_state.AiRevealed) && Judge.IsValidSecret(_state.AiSecret) ? _state.AiSecret : null;
+            _resultPopup.ShowDraw(message, cards, rematchOnline: true, waitForDigits: cards == null);
+            ReceiveOnlineResultSecret(cards != null);
             _network?.BeginRematchVote();
             SettleMatch(false, draw: true);
         }
@@ -3391,7 +3410,7 @@ namespace LiarsBatting.Presentation
             GameAudio.ResultMusic(playerWon);
             _resultPopup.Show(playerWon,
                 message ?? (playerWon ? "상대의 비밀번호를 맞혔다" : "내 비밀번호가 들켰다"),
-                playerWon ? _state.AiSecret : _state.PlayerSecret);
+                _state.AiSecret);
             SettleMatch(playerWon);
         }
     }
