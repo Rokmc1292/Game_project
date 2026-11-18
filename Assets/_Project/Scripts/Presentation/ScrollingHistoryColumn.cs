@@ -10,6 +10,10 @@ namespace LiarsBatting.Presentation
     // ScrollRect, auto-scrolling to the newest row as it's added.
     public class ScrollingHistoryColumn
     {
+        // Width of the hover popups that hold a column: guess digits (72) + lamps (~53) + one badge (46)
+        // + gaps and padding, with a little room to spare.
+        public const float PopupWidth = 240f;
+
         public readonly RectTransform Root;
         private readonly RectTransform _content;
         private readonly RectTransform _viewportRt;
@@ -115,7 +119,7 @@ namespace LiarsBatting.Presentation
             _scrollRect.verticalNormalizedPosition = 0f;
         }
 
-        // Builds one guess row (digits + strike/ball/out badges + optional "거짓" badge) under any parent.
+        // Builds one guess row (digits + strike/ball/out lamps + optional "거짓" badge) under any parent.
         public static RectTransform BuildRow(Transform parent, int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true, bool truthConfirmed = false)
         {
             var row = UiFactory.HorizontalGroup(parent, "Row", spacing: 6);
@@ -124,15 +128,8 @@ namespace LiarsBatting.Presentation
             var guessText = UiFactory.Text(row, string.Join(" ", guess), 13, UITheme.Ink, TextAnchor.MiddleLeft);
             UiFactory.SetWidth(guessText, 72);
 
-            if (reported.IsOut)
-            {
-                UiFactory.Badge(row, "OUT", UITheme.OutBg, UITheme.OutFg);
-            }
-            else
-            {
-                if (reported.Strike > 0) UiFactory.Badge(row, reported.Strike + "S", UITheme.StrikeBg, UITheme.StrikeFg);
-                if (reported.Ball > 0) UiFactory.Badge(row, reported.Ball + "B", UITheme.BallBg, UITheme.BallFg);
-            }
+            // Same lamps as the popups, compact: top row balls (green), bottom row strikes (orange).
+            ResultLamps.Build(row, reported, 11f, labels: false);
 
             if (wasLie && revealLie)
                 UiFactory.Badge(row, "거짓", UITheme.ClaySoft, UITheme.Clay);

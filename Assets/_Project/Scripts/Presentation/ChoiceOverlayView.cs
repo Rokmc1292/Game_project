@@ -15,6 +15,7 @@ namespace LiarsBatting.Presentation
         private readonly RectTransform _buttonRow;
         private readonly RectTransform _box;
         private readonly Text _countdown;
+        private readonly RectTransform _content;
 
         public ChoiceOverlayView(Transform parent)
         {
@@ -36,6 +37,10 @@ namespace LiarsBatting.Presentation
 
             _box = box;
             _message = UiFactory.Text(box, "", 16, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            // Optional visuals between the message and the buttons (result lamps, the lamp picker).
+            _content = UiFactory.VerticalGroup(box, "Content", spacing: 8, childAlign: TextAnchor.MiddleCenter);
+            _content.GetComponent<VerticalLayoutGroup>().childForceExpandWidth = false;
+            UiFactory.SetFlexible(_content, 1, 0);
             _buttonRow = UiFactory.HorizontalGroup(box, "Buttons", spacing: 10, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(_buttonRow, 52);
             // Without this the row (a HorizontalGroup, flexible by default) soaks up all the spare
@@ -108,14 +113,34 @@ namespace LiarsBatting.Presentation
 
         // For the rarer case where options need DIFFERENT colors in one prompt
         // (e.g. a neutral "trust" button next to a clay-colored "challenge" one).
-        public void ShowMixed(string message, params (string label, Color color, Action onClick)[] options)
+        public Button[] ShowMixed(string message, params (string label, Color color, Action onClick)[] options)
+            => ShowWithContent(message, null, options);
+
+        // buildContent fills a slot between the message and the buttons (e.g. result lamps).
+        // Returns the buttons in option order, so a caller can enable/disable them later.
+        public Button[] ShowWithContent(string message, Action<RectTransform> buildContent,
+            params (string label, Color color, Action onClick)[] options)
         {
             _message.text = message;
+            _message.gameObject.SetActive(!string.IsNullOrEmpty(message));
             for (int i = _buttonRow.childCount - 1; i >= 0; i--)
                 UnityEngine.Object.Destroy(_buttonRow.GetChild(i).gameObject);
-
-            foreach (var option in options)
+            for (int i = _content.childCount - 1; i >= 0; i--)
             {
+                var child = _content.GetChild(i).gameObject;
+                child.SetActive(false);   // Destroy is end-of-frame; hide it so it can't take layout space now
+                UnityEngine.Object.Destroy(child);
+            }
+            buildContent?.Invoke(_content);
+            _content.gameObject.SetActive(buildContent != null);
+            // Lamps need more room than a message + buttons, so the box grows taller while they're shown.
+            _box.anchorMin = new Vector2(0.12f, buildContent != null ? 0.2f : 0.3f);
+            _box.anchorMax = new Vector2(0.88f, buildContent != null ? 0.8f : 0.7f);
+
+            var buttons = new Button[options.Length];
+            for (int o = 0; o < options.Length; o++)
+            {
+                var option = options[o];
                 var onClick = option.onClick;
                 var button = UiFactory.Button(_buttonRow, option.label, option.color, Color.white, () =>
                 {
@@ -124,9 +149,11 @@ namespace LiarsBatting.Presentation
                 }, 15);
                 UiFactory.SetSize(button, Mathf.Max(130f, option.label.Length * 11f + 64f), 48f);
                 MenuButtonStyle.ApplyChoice(button, option.color);
+                buttons[o] = button;
             }
             _root.SetActive(true);
             _root.transform.SetAsLastSibling();
+            return buttons;
         }
     }
 }

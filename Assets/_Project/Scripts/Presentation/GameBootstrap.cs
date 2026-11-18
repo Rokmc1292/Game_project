@@ -2485,21 +2485,41 @@ namespace LiarsBatting.Presentation
                 return;
             }
 
-            var options = new (string, Action)[open.Count];
-            for (int n = 0; n < open.Count; n++)
+            // My four cards in their real positions: pick a hidden one, then confirm. Already-public
+            // cards stay visible (dimmed) so it's clear which positions the opponent knows.
+            int chosen = -1;
+            Text status = null;
+            Button[] buttons = null;
+
+            void Reveal()
             {
-                int i = open[n];
-                options[n] = ($"{i + 1}번째: {_state.PlayerSecret[i]}", () =>
-                {
-                    _state.PlayerRevealed[i] = true;
-                    // Only set in AI mode -- in an online match there's no local
-                    // AiOpponent to keep in sync, the opponent is a real client.
-                    _ai?.NarrowByRevealedDigit(i, _state.PlayerSecret[i]);
-                    RefreshRevealedRows();
-                    onRevealed(i);
-                });
+                int i = chosen;
+                if (i < 0) return;
+                _state.PlayerRevealed[i] = true;
+                // Only set in AI mode -- in an online match there's no local
+                // AiOpponent to keep in sync, the opponent is a real client.
+                _ai?.NarrowByRevealedDigit(i, _state.PlayerSecret[i]);
+                RefreshRevealedRows();
+                onRevealed(i);
             }
-            _choiceOverlay.Show(message, options);
+
+            buttons = _choiceOverlay.ShowWithContent(message, slot =>
+                {
+                    RevealCardPicker.Build(slot, _state.PlayerSecret, _state.PlayerRevealed, index =>
+                    {
+                        chosen = index;
+                        if (buttons != null) buttons[0].interactable = true;
+                        if (status != null)
+                        {
+                            status.text = $"{index + 1}번째 카드 [{_state.PlayerSecret[index]}]를 상대에게 공개합니다.";
+                            status.color = UITheme.Ink;
+                        }
+                    });
+                    status = UiFactory.Text(slot, "공개할 카드를 고르세요.", 13, UITheme.Muted, TextAnchor.MiddleCenter);
+                    UiFactory.SetSize(status, 420, 20);
+                },
+                ("선택한 카드 공개", UITheme.Clay, Reveal));
+            buttons[0].interactable = false;
         }
 
         private void RefreshRevealedRows()
@@ -2535,23 +2555,27 @@ namespace LiarsBatting.Presentation
                 onChoice(result, usedToken);
             }
 
-            string resultText = trueResult.IsOut ? "OUT" : $"{trueResult.Strike}S {trueResult.Ball}B";
-            string message = $"상대 추측: {string.Join(" ", opponentGuess)}\n진짜 결과: {resultText}";
+            string message = $"상대 추측: {string.Join(" ", opponentGuess)}\n진짜 결과";
+            void TrueLamps(RectTransform slot)
+            {
+                ResultLamps.Build(slot, trueResult, 36f);
+            }
 
             bool canLie = lieTokensLeft > 0 && (!trueResult.IsWin || canLieAboutWin);
             if (!canLie)
             {
-                _choiceOverlay.Show(message, ("진실대로 전송", () => Resolve(trueResult, false)));
+                _choiceOverlay.ShowWithContent(message, TrueLamps,
+                    ("진실대로 전송", UITheme.Accent, () => Resolve(trueResult, false)));
             }
             else
             {
-                _choiceOverlay.ShowMixed(message,
+                _choiceOverlay.ShowWithContent(message, TrueLamps,
                     ("진실대로 전송", UITheme.Accent, () => Resolve(trueResult, false)),
                     ($"LIE TOKEN 사용 ({lieTokensLeft}개)", UITheme.Clay,
-                        () => PromptFakeStrikeChoice(trueResult, (r, u) => Resolve(r, u))));
+                        () => PromptFakeLamps(trueResult, (r, u) => Resolve(r, u))));
             }
 
-            // The overlay may be on any of the three steps (truth/lie, strike, ball) here.
+            // The overlay may be on either step (truth/lie, lamp picker) here.
             _timer.Start(DefendChoiceSeconds, () =>
             {
                 _choiceOverlay.Hide();
@@ -2559,45 +2583,41 @@ namespace LiarsBatting.Presentation
             });
         }
 
-        // Choosing a fake result is two short steps (strike, then ball) instead of
-        // one wall of up to a dozen "2S1B"-style buttons -- easier to scan, and it
-        // never needs more than 4-5 buttons on screen at once. The defend-choice
-        // timer (started by the caller, PromptDefenseChoice) keeps running through
-        // both of these steps and still falls back to the truth if it expires here.
-        private void PromptFakeStrikeChoice(JudgeResult trueResult, Action<JudgeResult, bool> onChoice)
+        // The fake result is set on two lamp rows (top = balls, bottom = strikes, each filling
+        // left to right), then sent. The send button only lights up for a
+        // plausible lie (not the truth, not a fake win, at most 4 lamps in total, not the
+        // impossible 3S1B). The defend-choice timer (started by PromptDefenseChoice) keeps
+        // running here and still falls back to the truth.
+        private void PromptFakeLamps(JudgeResult trueResult, Action<JudgeResult, bool> onChoice)
         {
             var allFakes = Judge.PlausibleFakeResults(trueResult);
-            var strikeOptions = new List<int>();
-            foreach (var f in allFakes)
-                if (!strikeOptions.Contains(f.Strike)) strikeOptions.Add(f.Strike);
-            strikeOptions.Sort();
+            JudgeResult current = trueResult;
+            Text status = null;
+            Button[] buttons = null;
 
-            var buttons = new (string, Color, Action)[strikeOptions.Count];
-            for (int i = 0; i < strikeOptions.Count; i++)
+            void Validate()
             {
-                int s = strikeOptions[i];
-                buttons[i] = ($"{s} 스트라이크", UITheme.StrikeFg, () => PromptFakeBallChoice(s, allFakes, onChoice));
-            }
-            _choiceOverlay.ShowMixed("거짓말: 스트라이크를 몇 개로 알려줄까요?", buttons);
-        }
-
-        private void PromptFakeBallChoice(int strike, List<JudgeResult> allFakes, Action<JudgeResult, bool> onChoice)
-        {
-            var matching = allFakes.FindAll(f => f.Strike == strike);
-            if (matching.Count == 1)
-            {
-                onChoice(matching[0], true);
-                return;
+                bool ok = allFakes.Contains(current);
+                if (buttons != null && buttons.Length > 1) buttons[1].interactable = ok;
+                if (status == null) return;
+                if (ok) { status.text = "이 결과로 속입니다."; status.color = UITheme.Ink; return; }
+                status.color = UITheme.Clay;
+                if (current.Equals(trueResult)) status.text = "진짜 결과와 같아요. 램프를 하나 이상 바꿔주세요.";
+                else if (current.IsWin) status.text = "4스트라이크(정답)로는 속일 수 없어요.";
+                else if (current.Strike + current.Ball > Judge.Digits) status.text = "스트라이크와 볼을 합쳐 4개까지만 켤 수 있어요.";
+                else status.text = "3스트라이크 1볼은 나올 수 없는 조합이에요.";
             }
 
-            var buttons = new (string, Color, Action)[matching.Count];
-            for (int i = 0; i < matching.Count; i++)
-            {
-                var fake = matching[i];
-                string label = fake.IsOut ? "OUT" : $"{fake.Ball} 볼";
-                buttons[i] = (label, UITheme.BallFg, () => onChoice(fake, true));
-            }
-            _choiceOverlay.ShowMixed($"거짓말: {strike} 스트라이크로 정했습니다. 볼은 몇 개로 알려줄까요?", buttons);
+            buttons = _choiceOverlay.ShowWithContent("거짓말: 상대에게 보여줄 결과를 만드세요",
+                slot =>
+                {
+                    ResultLamps.BuildPicker(slot, trueResult, 36f, result => { current = result; Validate(); });
+                    status = UiFactory.Text(slot, "", 13, UITheme.Ink, TextAnchor.MiddleCenter);
+                    UiFactory.SetSize(status, 420, 20);
+                },
+                ("진실대로 전송", UITheme.Accent, () => onChoice(trueResult, false)),
+                ("이 결과로 전송", UITheme.Clay, () => onChoice(current, true)));
+            Validate();
         }
 
         // Shared trust/challenge decision (point 4). Owns its own 20s timer:
@@ -2622,8 +2642,7 @@ namespace LiarsBatting.Presentation
             void ResolveTrust() { _timer.Stop(); GameAudio.Play("SFX_Trust_Accept"); onTrust(); }
             void ResolveChallenge() { _timer.Stop(); GameAudio.Play("SFX_Challenge_Doubt"); onChallenge(); }
 
-            string resultText = reported.IsOut ? "OUT" : $"{reported.Strike}S {reported.Ball}B";
-            string message = $"상대가 알려준 결과: {resultText}\n믿으시겠습니까, 거짓말 같습니까?";
+            string message = "상대가 알려준 결과\n믿으시겠습니까, 거짓말 같습니까?";
             bool rogueAvailable = _state.PlayerHero == HeroId.Rogue && _state.PlayerAbilityCharges > 0;
 
             var options = new List<(string, Color, Action)>
@@ -2704,7 +2723,10 @@ namespace LiarsBatting.Presentation
                 ShowRogueResult(wasLie);
             }
 
-            _choiceOverlay.ShowMixed(message, options.ToArray());
+            _choiceOverlay.ShowWithContent(message, slot =>
+            {
+                ResultLamps.Build(slot, reported, 36f);
+            }, options.ToArray());
             _timer.Start(TrustChoiceSeconds, () =>
             {
                 _choiceOverlay.Hide();

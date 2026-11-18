@@ -45,7 +45,7 @@ namespace LiarsBatting.Presentation
             popupRt.anchorMax = new Vector2(1, 0);
             popupRt.pivot = new Vector2(1, 1);
             popupRt.anchoredPosition = new Vector2(0, -6);
-            popupRt.sizeDelta = new Vector2(360, 240);
+            popupRt.sizeDelta = new Vector2(ScrollingHistoryColumn.PopupWidth, 240);
             _popup.GetComponent<Image>().color = new Color(0.05f, 0.05f, 0.045f, 0.98f);
             var canvas = _popup.AddComponent<Canvas>();
             canvas.overrideSorting = true;

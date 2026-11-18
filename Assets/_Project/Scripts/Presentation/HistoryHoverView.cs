@@ -64,7 +64,8 @@ namespace LiarsBatting.Presentation
             popupRt.anchorMax = new Vector2(ax, 1);
             popupRt.pivot = new Vector2(ax, 0);
             popupRt.anchoredPosition = new Vector2(0, 6);
-            popupRt.sizeDelta = new Vector2(364, 280);
+            // A row is only digits + lamps + one badge (~185px), so the popup doesn't need to be wider.
+            popupRt.sizeDelta = new Vector2(ScrollingHistoryColumn.PopupWidth, 280);
             _popup.GetComponent<Image>().color = new Color(0.05f, 0.05f, 0.045f, 0.97f);
             var canvas = _popup.AddComponent<Canvas>();
             canvas.overrideSorting = true;

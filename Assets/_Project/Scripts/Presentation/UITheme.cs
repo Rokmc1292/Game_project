@@ -25,6 +25,11 @@ namespace LiarsBatting.Presentation
         public static readonly Color OutBg = Hex("F4A8A0");
         public static readonly Color OutFg = Hex("7A1F16");
 
+        // Result lamps (ResultLamps): orange strike, green ball, dim unlit slot.
+        public static readonly Color StrikeLamp = Hex("FF8A1F");
+        public static readonly Color BallLamp = Hex("3FCB6B");
+        public static readonly Color LampOff = Hex("3A342C");
+
         public static Color Hex(string hex)
         {
             ColorUtility.TryParseHtmlString("#" + hex, out var c);
