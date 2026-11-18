@@ -60,8 +60,11 @@ namespace LiarsBatting.Network
 
         // ---------- random queue ----------
 
+        private bool _creatingMatch;
+
         public void JoinRandomQueue(Action<string, string> onMatched, Action<string> onError)
         {
+            _creatingMatch = false;
             var fields = new JObject
             {
                 ["nickname"] = FirestoreClient.StringField(_myNickname),
@@ -103,13 +106,11 @@ namespace LiarsBatting.Network
                 // Heartbeat: refresh my own joinedAt so nobody else's staleness
                 // check mistakes me for an abandoned ticket while I'm still here.
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                _db.SetDocument($"matchQueue/{_myNickname}",
-                    new JObject
-                    {
-                        ["nickname"] = FirestoreClient.StringField(_myNickname),
-                        ["joinedAt"] = FirestoreClient.IntField(now),
-                        ["matchId"] = FirestoreClient.StringField("")
-                    }, null, null);
+                // Only joinedAt is touched. Replacing the whole document (as this used to) could wipe the matchId
+                // the other player had written into it a moment earlier, leaving me waiting forever.
+                _db.PatchFields($"matchQueue/{_myNickname}",
+                    new JObject { ["joinedAt"] = FirestoreClient.IntField(now) },
+                    new[] { "joinedAt" }, null, null);
 
                 // Still waiting -- look for anyone else free, and only act if I'm
                 // the one both sides would agree should create the match.
@@ -140,6 +141,10 @@ namespace LiarsBatting.Network
 
                     if (bestCandidate == null || !iAmSmallestAvailable) return;
 
+                    // One match at a time: a slow reply must not let the next poll create a second one.
+                    if (_creatingMatch) return;
+                    _creatingMatch = true;
+
                     string newMatchId = Guid.NewGuid().ToString("N");
                     var matchFields = new JObject
                     {
@@ -152,8 +157,13 @@ namespace LiarsBatting.Network
                         _db.SetDocument($"matchQueue/{_myNickname}",
                             WithMatchId(myDoc, _myNickname, newMatchId), null, null);
                         _db.SetDocument($"matchQueue/{bestCandidate}",
-                            WithMatchId(bestCandidateDoc, bestCandidate, newMatchId), null, null);
-                    }, onError);
+                            WithMatchId(bestCandidateDoc, bestCandidate, newMatchId),
+                            () => _creatingMatch = false, _ => _creatingMatch = false);
+                    }, error =>
+                    {
+                        _creatingMatch = false;
+                        onError?.Invoke(error);
+                    });
                 }, onError);
             }, onError);
         }

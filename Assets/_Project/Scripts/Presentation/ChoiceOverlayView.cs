@@ -16,6 +16,11 @@ namespace LiarsBatting.Presentation
         private readonly RectTransform _box;
         private readonly Text _countdown;
         private readonly RectTransform _content;
+        private readonly Button _backButton;     // top-left "뒤로가기", only for popups that ask for it
+        private RectTransform _historyRow;       // the 나의 기록 / 상대 기록 buttons, top-right
+        private bool _hideHistoryNext;
+        private Action _pendingBack;
+        private Action _backAction;
 
         public ChoiceOverlayView(Transform parent)
         {
@@ -62,7 +67,34 @@ namespace LiarsBatting.Presentation
             countdownRt.sizeDelta = new Vector2(220, 34);
             _countdown.gameObject.SetActive(false);
 
+            _backButton = UiFactory.Button(box, "◀ 뒤로가기", UITheme.Accent, Color.white, OnBackClicked, 14);
+            _backButton.GetComponent<LayoutElement>().ignoreLayout = true;   // Button() already added a LayoutElement   // not part of the box's vertical layout
+            var backRt = (RectTransform)_backButton.transform;
+            backRt.anchorMin = new Vector2(0, 1);
+            backRt.anchorMax = new Vector2(0, 1);
+            backRt.pivot = new Vector2(0, 1);
+            backRt.anchoredPosition = new Vector2(16, -12);
+            backRt.sizeDelta = new Vector2(130, 34);
+            MenuButtonStyle.ApplyChoice(_backButton, UITheme.Accent);
+            _backButton.gameObject.SetActive(false);
+
             _root.SetActive(false);
+        }
+
+        // Applies to the NEXT Show only: hide the history buttons (a popup that has nothing to do with
+        // the match so far, like the AI difficulty choice) and/or put a 뒤로가기 button in the top-left.
+        public void ConfigureNextShow(bool hideHistory, Action onBack = null)
+        {
+            _hideHistoryNext = hideHistory;
+            _pendingBack = onBack;
+        }
+
+        private void OnBackClicked()
+        {
+            _root.SetActive(false);
+            var back = _backAction;
+            _backAction = null;
+            back?.Invoke();
         }
 
         // Called every frame by the shared countdown while a timed decision is running.
@@ -91,6 +123,7 @@ namespace LiarsBatting.Presentation
             row.pivot = new Vector2(1, 1);
             row.anchoredPosition = new Vector2(-16, -12);
             row.sizeDelta = new Vector2(220, 32);
+            _historyRow = row;
 
             var mineButton = new HistoryPeekButton(row, "나의 기록", "나의 추측 기록 (상대 응답)", mine, host);
             UiFactory.SetSize(mineButton.Root, 104, 32);
@@ -121,6 +154,12 @@ namespace LiarsBatting.Presentation
         public Button[] ShowWithContent(string message, Action<RectTransform> buildContent,
             params (string label, Color color, Action onClick)[] options)
         {
+            if (_historyRow != null) _historyRow.gameObject.SetActive(!_hideHistoryNext);
+            _hideHistoryNext = false;
+            _backAction = _pendingBack;
+            _pendingBack = null;
+            _backButton.gameObject.SetActive(_backAction != null);
+
             _message.text = message;
             _message.gameObject.SetActive(!string.IsNullOrEmpty(message));
             for (int i = _buttonRow.childCount - 1; i >= 0; i--)

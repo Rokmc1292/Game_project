@@ -10,11 +10,18 @@ namespace LiarsBatting.Progression
         public static int PlayerXpToNext(int level) => 200 + 50 * (level - 1);
 
         // A finished match. AI matches give half of what a match against a person gives.
-        public static int MatchXp(bool online, bool won)
+        // A draw sits between a win and a loss.
+        // Against the AI a WIN pays more the harder the AI (aiTier 0 = 초급, 1 = 중수, 2 = 고수).
+        public static int MatchXp(bool online, bool won, bool draw = false, int aiTier = 0)
         {
+            if (draw) return online ? 90 : 45;
             if (online) return won ? 120 : 60;
-            return won ? 60 : 30;
+            if (!won) return 30;
+            return AiWinXp[System.Math.Max(0, System.Math.Min(aiTier, AiWinXp.Length - 1))];
         }
+
+        private static readonly int[] AiWinXp = { 60, 90, 120 };
+        private static readonly int[] AiWinHeroXp = { 50, 75, 100 };
 
         // Surrendering before this many seconds of match time earns nothing (no XP, no challenge
         // progress) -- otherwise quitting instantly would be the fastest way to farm.
@@ -30,10 +37,12 @@ namespace LiarsBatting.Progression
         public static int HeroXpToNext(int level) => 100 * level;
 
         // A finished match played as that hero (AI matches give half).
-        public static int HeroMatchXp(bool online, bool won)
+        public static int HeroMatchXp(bool online, bool won, bool draw = false, int aiTier = 0)
         {
+            if (draw) return online ? 70 : 35;
             if (online) return won ? 100 : 40;
-            return won ? 50 : 20;
+            if (!won) return 20;
+            return AiWinHeroXp[System.Math.Max(0, System.Math.Min(aiTier, AiWinHeroXp.Length - 1))];
         }
 
         public const int HeroChallengeXp = 150;

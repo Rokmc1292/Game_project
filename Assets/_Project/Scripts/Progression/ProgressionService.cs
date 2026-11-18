@@ -79,7 +79,7 @@ namespace LiarsBatting.Progression
             var result = new MatchSettlement { LevelBefore = p.Level };
 
             // ---- player level ----
-            int xp = LevelTable.MatchXp(s.Online, s.Won);
+            int xp = LevelTable.MatchXp(s.Online, s.Won, s.Draw, s.AiTier);
 
             foreach (var def in ChallengeCatalog.DailyFor(p.DailyPeriod))
                 if (Advance(p.Daily, p.DailyDone, def, def.Progress(s)))
@@ -121,7 +121,7 @@ namespace LiarsBatting.Progression
             var hero = p.Hero(s.Hero);
             result.Hero = s.Hero;
             result.HeroLevelBefore = hero.Level;
-            int heroXp = LevelTable.HeroMatchXp(s.Online, s.Won);
+            int heroXp = LevelTable.HeroMatchXp(s.Online, s.Won, s.Draw, s.AiTier);
             foreach (var def in HeroChallengeCatalog.For(s.Hero))
                 if (Advance(hero.Challenges, hero.Done, def, def.Progress(s)))
                 {

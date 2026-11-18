@@ -15,13 +15,14 @@ service cloud.firestore {
 
     // ---------- players/{nickname}: profile, record, progress ----------
     function isPlayerShape(d, name) {
-      return d.keys().hasOnly(['nickname', 'lastSeen', 'profileIcon', 'wins', 'losses', 'level', 'title', 'progress'])
+      return d.keys().hasOnly(['nickname', 'lastSeen', 'profileIcon', 'wins', 'losses', 'draws', 'level', 'title', 'progress'])
         && d.get('nickname', name) == name
         && name.size() <= 20
         && d.get('lastSeen', 0) is int
         && d.get('profileIcon', '') is string && d.get('profileIcon', '').size() <= 20
         && d.get('wins', 0) is int && d.get('wins', 0) >= 0
         && d.get('losses', 0) is int && d.get('losses', 0) >= 0
+        && d.get('draws', 0) is int && d.get('draws', 0) >= 0
         && d.get('level', 1) is int && d.get('level', 1) >= 1 && d.get('level', 1) <= 30
         && d.get('title', '') is string && d.get('title', '').size() <= 30
         && d.get('progress', '') is string && d.get('progress', '').size() <= 20000;
@@ -31,12 +32,14 @@ service cloud.firestore {
       allow read: if true;
       // Registration and renaming create the document (create-only, so names stay unique).
       allow create: if isPlayerShape(request.resource.data, name);
-      // Settling a match adds at most one win or loss; the level never goes down.
+      // Settling a match adds at most one win, loss or draw; the level never goes down.
       allow update: if isPlayerShape(request.resource.data, name)
         && request.resource.data.get('wins', 0) >= resource.data.get('wins', 0)
         && request.resource.data.get('wins', 0) <= resource.data.get('wins', 0) + 1
         && request.resource.data.get('losses', 0) >= resource.data.get('losses', 0)
         && request.resource.data.get('losses', 0) <= resource.data.get('losses', 0) + 1
+        && request.resource.data.get('draws', 0) >= resource.data.get('draws', 0)
+        && request.resource.data.get('draws', 0) <= resource.data.get('draws', 0) + 1
         && request.resource.data.get('level', 1) >= resource.data.get('level', 1);
       // Renaming deletes the old document. Without sign-in this can't be limited to its owner.
       allow delete: if true;
@@ -52,7 +55,8 @@ service cloud.firestore {
           'revealedBy', 'revealedIndex', 'revealedDigit', 'rogueWasLie',
           'priestPosition', 'priestGuessDigit', 'priestAnswerBool',
           'wizardUserSide', 'wizardUserIndex', 'wizardUserDigit',
-          'wizardResponderSide', 'wizardResponderIndex', 'wizardResponderDigit'])
+          'wizardResponderSide', 'wizardResponderIndex', 'wizardResponderDigit',
+          'rematchA', 'rematchB', 'nextMatchId'])
         && request.resource.data.get('playerA', '') is string && request.resource.data.get('playerA', '').size() <= 20
         && request.resource.data.get('playerB', '') is string && request.resource.data.get('playerB', '').size() <= 20;
       allow delete: if false;   // the game never deletes matches

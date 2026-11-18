@@ -23,9 +23,18 @@ namespace LiarsBatting.Network
         public void GetDocument(string path, Action<JObject> onSuccess, Action<string> onError)
             => _host.StartCoroutine(GetDocumentCo(path, onSuccess, onError));
 
+        // Each segment of a document path is escaped on its own: a nickname containing '#', '?', '%' or a
+        // space would otherwise cut the URL short (everything after '#' is dropped, taking the API key with it).
+        private static string EscapePath(string path)
+        {
+            var parts = path.Split('/');
+            for (int i = 0; i < parts.Length; i++) parts[i] = Uri.EscapeDataString(parts[i]);
+            return string.Join("/", parts);
+        }
+
         private IEnumerator GetDocumentCo(string path, Action<JObject> onSuccess, Action<string> onError)
         {
-            string url = $"{FirebaseConfig.BaseUrl}/{path}?key={FirebaseConfig.ApiKey}";
+            string url = $"{FirebaseConfig.BaseUrl}/{EscapePath(path)}?key={FirebaseConfig.ApiKey}";
             using var req = UnityWebRequest.Get(url);
             yield return req.SendWebRequest();
 
@@ -44,7 +53,7 @@ namespace LiarsBatting.Network
 
         private IEnumerator SetDocumentCo(string path, JObject fields, Action onSuccess, Action<string> onError)
         {
-            string url = $"{FirebaseConfig.BaseUrl}/{path}?key={FirebaseConfig.ApiKey}";
+            string url = $"{FirebaseConfig.BaseUrl}/{EscapePath(path)}?key={FirebaseConfig.ApiKey}";
             var body = new JObject { ["fields"] = fields };
             byte[] bodyBytes = Encoding.UTF8.GetBytes(body.ToString());
 
@@ -68,7 +77,7 @@ namespace LiarsBatting.Network
         private IEnumerator CreateDocumentCo(string collection, string docId, JObject fields,
             Action onSuccess, Action onExists, Action<string> onError)
         {
-            string url = $"{FirebaseConfig.BaseUrl}/{collection}?documentId={UnityWebRequest.EscapeURL(docId)}&key={FirebaseConfig.ApiKey}";
+            string url = $"{FirebaseConfig.BaseUrl}/{EscapePath(collection)}?documentId={Uri.EscapeDataString(docId)}&key={FirebaseConfig.ApiKey}";
             var body = new JObject { ["fields"] = fields };
             byte[] bodyBytes = Encoding.UTF8.GetBytes(body.ToString());
 
@@ -98,7 +107,7 @@ namespace LiarsBatting.Network
             var mask = new StringBuilder();
             foreach (var f in fieldPaths)
                 mask.Append("&updateMask.fieldPaths=").Append(UnityWebRequest.EscapeURL(f));
-            string url = $"{FirebaseConfig.BaseUrl}/{path}?key={FirebaseConfig.ApiKey}{mask}";
+            string url = $"{FirebaseConfig.BaseUrl}/{EscapePath(path)}?key={FirebaseConfig.ApiKey}{mask}";
 
             var body = new JObject { ["fields"] = fields };
             byte[] bodyBytes = Encoding.UTF8.GetBytes(body.ToString());
@@ -118,7 +127,9 @@ namespace LiarsBatting.Network
 
         private IEnumerator ListCollectionCo(string path, Action<JArray> onSuccess, Action<string> onError)
         {
-            string url = $"{FirebaseConfig.BaseUrl}/{path}?key={FirebaseConfig.ApiKey}";
+            // pageSize: without it Firestore returns only its default first page (20 documents, in name order),
+            // so leftover entries could push later names (Korean nicknames sort last) out of the list.
+            string url = $"{FirebaseConfig.BaseUrl}/{EscapePath(path)}?pageSize=300&key={FirebaseConfig.ApiKey}";
             using var req = UnityWebRequest.Get(url);
             yield return req.SendWebRequest();
 
@@ -138,7 +149,7 @@ namespace LiarsBatting.Network
 
         private IEnumerator DeleteDocumentCo(string path, Action onSuccess, Action<string> onError)
         {
-            string url = $"{FirebaseConfig.BaseUrl}/{path}?key={FirebaseConfig.ApiKey}";
+            string url = $"{FirebaseConfig.BaseUrl}/{EscapePath(path)}?key={FirebaseConfig.ApiKey}";
             using var req = UnityWebRequest.Delete(url);
             yield return req.SendWebRequest();
 

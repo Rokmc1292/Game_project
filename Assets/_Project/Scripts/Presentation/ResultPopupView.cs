@@ -48,9 +48,13 @@ namespace LiarsBatting.Presentation
         private readonly CanvasGroup _buttonGroup;
         private readonly Sprite _winTitle;
         private readonly Sprite _loseTitle;
+        private readonly Text _drawTitle;          // "무 승 부": there is no title art for a draw, so it is lettered
+        private readonly Text _rematchStatus;
+        private readonly Button _rematchButton;
         private Coroutine _routine;
 
-        public ResultPopupView(Transform parent, MonoBehaviour host, Action onMainMenu)
+        // onRematch: the 리매치 button, only shown on a draw (see ShowDraw).
+        public ResultPopupView(Transform parent, MonoBehaviour host, Action onMainMenu, Action onRematch = null)
         {
             _host = host;
             _winTitle = Resources.Load<Sprite>("Result/result_title_win");
@@ -70,7 +74,7 @@ namespace LiarsBatting.Presentation
             _panel.anchorMin = new Vector2(0.5f, 0.5f);
             _panel.anchorMax = new Vector2(0.5f, 0.5f);
             _panel.pivot = new Vector2(0.5f, 0.5f);
-            _panel.sizeDelta = new Vector2(640f, 470f);
+            _panel.sizeDelta = new Vector2(640f, 506f);
             _panelGroup = panelGo.GetComponent<CanvasGroup>();
             var panelImage = panelGo.GetComponent<Image>();
             var panelSprite = Resources.Load<Sprite>("Result/result_panel");
@@ -99,6 +103,16 @@ namespace LiarsBatting.Presentation
             _title.raycastTarget = false;
             _titleGroup = titleGo.GetComponent<CanvasGroup>();
 
+            _drawTitle = UiFactory.Text(titleGo.transform, "무 승 부", 46, new Color32(214, 160, 70, 255),
+                TextAnchor.MiddleCenter, FontStyle.Bold);
+            UiFactory.StretchToFillParent((RectTransform)_drawTitle.transform);
+            _drawTitle.raycastTarget = false;
+            _drawTitle.horizontalOverflow = HorizontalWrapMode.Overflow;
+            var drawShadow = _drawTitle.gameObject.AddComponent<Shadow>();
+            drawShadow.effectColor = new Color(0f, 0f, 0f, 0.9f);
+            drawShadow.effectDistance = new Vector2(2f, -3f);
+            _drawTitle.gameObject.SetActive(false);
+
             _message = UiFactory.Text(content, "", 22, new Color32(190, 182, 166, 255), TextAnchor.MiddleCenter, FontStyle.Bold);
             _message.raycastTarget = false;
             UiFactory.SetHeight(_message, 30);
@@ -118,10 +132,21 @@ namespace LiarsBatting.Presentation
             summaryShadow.effectColor = new Color(0f, 0f, 0f, 0.85f);
             summaryShadow.effectDistance = new Vector2(1f, -1.5f);
 
-            var buttonRow = UiFactory.HorizontalGroup(content, "ButtonRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
+            // Rematch vote line (draws only): "상대의 응답을 기다리는 중..." / "상대가 리매치를 거절하였습니다".
+            _rematchStatus = UiFactory.Text(content, "", 15, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            _rematchStatus.raycastTarget = false;
+            UiFactory.SetHeight(_rematchStatus, 26);
+            _rematchStatus.gameObject.SetActive(false);
+
+            var buttonRow = UiFactory.HorizontalGroup(content, "ButtonRow", spacing: 16, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(buttonRow, 52);
             UiFactory.SetFlexible(buttonRow, 1, 0);
             _buttonGroup = buttonRow.gameObject.AddComponent<CanvasGroup>();
+            _rematchButton = UiFactory.Button(buttonRow, "리매치", UITheme.Clay, Color.white,
+                () => onRematch?.Invoke(), 17);
+            UiFactory.SetSize(_rematchButton, 200, 48);
+            MenuButtonStyle.ApplyChoice(_rematchButton, UITheme.StrikeFg);
+            _rematchButton.gameObject.SetActive(false);
             var button = UiFactory.Button(buttonRow, "메인 메뉴로", UITheme.Accent, Color.white,
                 () => onMainMenu?.Invoke(), 17);
             UiFactory.SetSize(button, 220, 48);
@@ -133,12 +158,33 @@ namespace LiarsBatting.Presentation
         public void SetSummary(string text) => _summary.text = text;
 
         // digits: the secret to show as cards (null = no cards, e.g. the opponent's secret isn't known online).
-        public void Show(bool won, string message, int[] digits)
+        public void Show(bool won, string message, int[] digits) => Present(won, false, false, message, digits);
+
+        // A draw: lettered title, and a 리매치 button next to 메인 메뉴로. Online, the rematch needs the
+        // opponent's answer too (SetRematchStatus tells how that is going); against the AI it is instant.
+        public void ShowDraw(string message, int[] digits, bool rematchOnline)
+            => Present(true, true, rematchOnline, message, digits);
+
+        // Updates the rematch line and the button: waiting for the answer, declined, timed out...
+        public void SetRematchStatus(string text, bool canRequest)
+        {
+            _rematchStatus.gameObject.SetActive(!string.IsNullOrEmpty(text));
+            _rematchStatus.text = text;
+            _rematchButton.interactable = canRequest;
+        }
+
+        private void Present(bool won, bool draw, bool online, string message, int[] digits)
         {
             if (_routine != null) _host.StopCoroutine(_routine);
 
+            _drawTitle.gameObject.SetActive(draw);
+            _title.enabled = !draw;
             _title.sprite = won ? _winTitle : _loseTitle;
             _title.color = _title.sprite != null ? Color.white : Color.clear;
+            _rematchButton.gameObject.SetActive(draw);
+            _rematchButton.interactable = true;
+            _rematchStatus.text = draw && online ? "리매치는 두 사람이 모두 수락해야 시작됩니다." : "";
+            _rematchStatus.gameObject.SetActive(_rematchStatus.text.Length > 0);
             _message.text = message;
             _summary.text = "";
             bool hasDigits = digits != null && digits.Length == 4;

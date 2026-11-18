@@ -101,6 +101,32 @@ namespace LiarsBatting.Network
 
         public const string GameOverByGuess = "guess";
         public const string GameOverByFullReveal = "fullReveal";
+        // The first mover's guess was right but the other side's last guess missed (see MatchRules).
+        public const string GameOverByLastGuessMissed = "lastGuessMissed";
+        // Both sides found each other's secret in the same round: nobody wins.
+        public const string GameOverByDraw = "draw";
+
+        // Player A always moves first; the first mover's correct guess gives the other side one last guess.
+        public const MatchSide FirstMover = MatchSide.A;
+
+        // ---- last guess (the draw rule) ----
+        // Attacker's client: the defender confirmed my guess was exactly right. Because I moved first,
+        // it is up to ME (only I know whether my Warrior still holds its ability) whether that wins
+        // outright or hands the defender a last guess.
+        public event Action OnMyGuessSolved;
+        // Defender's client: the first mover solved my secret and gave me one last guess.
+        public event Action OnLastGuessGranted;
+        // First mover's client: the defender's last guess arrived, to be judged against my secret.
+        public event Action<int[]> OnLastGuessReceived;
+
+        // ---- rematch vote (after a draw) ----
+        // The opponent asked for a rematch / said no / the vote timed out (bool = nobody answered).
+        public event Action OnRematchRequestedByOpponent;
+        public event Action<bool> OnRematchDeclined;
+        // Both said yes but the next match could not be created.
+        public event Action<string> OnRematchError;
+        // Both said yes: the id of the fresh match document to play in.
+        public event Action<string> OnRematchReady;
 
         public MatchSide OpponentSide => OtherSide(MySide);
         public event Action<string> OnError;
@@ -144,6 +170,7 @@ namespace LiarsBatting.Network
 
         public void Stop()
         {
+            StopRematchVote();
             if (_pollRoutine != null)
             {
                 _host.StopCoroutine(_pollRoutine);
@@ -210,10 +237,6 @@ namespace LiarsBatting.Network
                 _heroB = FirestoreClient.ReadString(doc, "heroB", "");
                 _secretASet = FirestoreClient.ReadBool(doc, "secretASet");
                 _secretBSet = FirestoreClient.ReadBool(doc, "secretBSet");
-                _status = FirestoreClient.ReadString(doc, "status", _status);
-                _turnAttacker = FirestoreClient.ReadString(doc, "turnAttacker", "A") == "A" ? MatchSide.A : MatchSide.B;
-                _warriorKeepTurn = FirestoreClient.ReadBool(doc, "warriorKeepTurn", false);
-
                 // Checked on every poll, NOT gated by seq: MarkMyHeroReady/
                 // MarkMySecretReady write their own readiness as a field-masked
                 // patch (so the two setup writes can't stomp on each other) and
@@ -240,6 +263,13 @@ namespace LiarsBatting.Network
                 if (seq <= _lastSeq) return; // nothing new, or it's my own write echoing back
                 _lastSeq = seq;
 
+                // Only a NEW document may change who has the turn. Read before the check above, a response
+                // that was already in flight when I wrote (carrying the turn from before my write) could
+                // put the old turn owner back and let both sides attack at once.
+                _status = FirestoreClient.ReadString(doc, "status", _status);
+                _turnAttacker = FirestoreClient.ReadString(doc, "turnAttacker", "A") == "A" ? MatchSide.A : MatchSide.B;
+                _warriorKeepTurn = FirestoreClient.ReadBool(doc, "warriorKeepTurn", false);
+
                 string action = FirestoreClient.ReadString(doc, "action", "");
                 switch (action)
                 {
@@ -254,6 +284,18 @@ namespace LiarsBatting.Network
 
                     case "challenge":
                         OnChallengeNeedsMyJudgement?.Invoke();
+                        break;
+
+                    case "solved":
+                        OnMyGuessSolved?.Invoke();
+                        break;
+
+                    case "last_guess_granted":
+                        OnLastGuessGranted?.Invoke();
+                        break;
+
+                    case "last_guess":
+                        OnLastGuessReceived?.Invoke(DecodeGuess(FirestoreClient.ReadString(doc, "guessDigits", "")));
                         break;
 
                     case "reveal_needed":
@@ -282,6 +324,18 @@ namespace LiarsBatting.Network
                         break;
 
                     case "finished":
+                        // A last digit that ended the match travels inside the "finished" write itself.
+                        string finalRevealer = FirestoreClient.ReadString(doc, "revealedBy", "");
+                        if (finalRevealer != "" && finalRevealer != SideKey(MySide))
+                            OnOpponentRevealed?.Invoke(finalRevealer == "A" ? MatchSide.A : MatchSide.B,
+                                (int)FirestoreClient.ReadInt(doc, "revealedIndex", -1),
+                                (int)FirestoreClient.ReadInt(doc, "revealedDigit", -1));
+                        string finalResponder = FirestoreClient.ReadString(doc, "wizardResponderSide", "");
+                        if (finalResponder != "" && finalResponder != SideKey(MySide))
+                            OnOpponentWizardReveal?.Invoke(
+                                (int)FirestoreClient.ReadInt(doc, "wizardResponderIndex", -1),
+                                (int)FirestoreClient.ReadInt(doc, "wizardResponderDigit", -1));
+
                         if (FirestoreClient.ReadBool(doc, "surrendered", false))
                         {
                             OnOpponentSurrendered?.Invoke();
@@ -387,7 +441,14 @@ namespace LiarsBatting.Network
             if (reported.IsWin)
             {
                 _myTrueResultForCurrentDefense = null;
-                SubmitGameOver(OtherSide(MySide)); // the attacker guessed my secret exactly
+                if (OpponentSide == FirstMover)
+                {
+                    // The first mover guessed my secret: they decide (Warrior keeping its ability wins
+                    // outright) whether I get one last guess -- see OnMyGuessSolved.
+                    WriteBaseDoc("solved", null);
+                    return;
+                }
+                SubmitGameOver(OtherSide(MySide)); // the second mover guessed my secret exactly: that wins
                 return;
             }
 
@@ -461,6 +522,41 @@ namespace LiarsBatting.Network
             OnGameOver?.Invoke(winner, reason);
         }
 
+        // The reveal that opens my LAST hidden digit ends the match, so the two facts go out as ONE write.
+        // (Two back-to-back writes replace each other: the opponent would poll only the "finished" one and
+        // never see the final digit, and a reordered pair could even erase the ending.) The other side
+        // applies the digit first, then the ending -- see the "finished" case in PollOnce.
+        public void SubmitRevealAndGameOver(int index, int digit, MatchSide winner, string reason)
+        {
+            _winner = SideKey(winner);
+            var extra = new JObject
+            {
+                ["revealedBy"] = FirestoreClient.StringField(SideKey(MySide)),
+                ["revealedIndex"] = FirestoreClient.IntField(index),
+                ["revealedDigit"] = FirestoreClient.IntField(digit),
+                ["winner"] = FirestoreClient.StringField(_winner),
+                ["reason"] = FirestoreClient.StringField(reason)
+            };
+            WriteBaseDoc("finished", extra);
+            OnGameOver?.Invoke(winner, reason);
+        }
+
+        // Same, for the reply to the opponent's Clairvoyance that opens my last hidden digit.
+        public void SubmitWizardResponseAndGameOver(int index, int digit, MatchSide winner, string reason)
+        {
+            _winner = SideKey(winner);
+            var extra = new JObject
+            {
+                ["wizardResponderSide"] = FirestoreClient.StringField(SideKey(MySide)),
+                ["wizardResponderIndex"] = FirestoreClient.IntField(index),
+                ["wizardResponderDigit"] = FirestoreClient.IntField(digit),
+                ["winner"] = FirestoreClient.StringField(_winner),
+                ["reason"] = FirestoreClient.StringField(reason)
+            };
+            WriteBaseDoc("finished", extra);
+            OnGameOver?.Invoke(winner, reason);
+        }
+
         // Ends the match immediately with the other side as the winner. Written
         // as a normal "finished" action plus a flag, so the opponent can tell it
         // apart from a guessed-secret win.
@@ -473,6 +569,182 @@ namespace LiarsBatting.Network
                 ["surrendered"] = FirestoreClient.BoolField(true)
             };
             WriteBaseDoc("finished", extra);
+        }
+
+        // ---------- last guess (the draw rule) ----------
+
+        // First mover's client, after OnMyGuessSolved: the defender gets one last guess. Hitting it is a
+        // draw, missing it a win for me. The turn moves to the defender for that one guess.
+        public void SubmitGrantLastGuess()
+        {
+            _turnAttacker = OtherSide(MySide);
+            _warriorKeepTurn = false;
+            WriteBaseDoc("last_guess_granted", null);
+        }
+
+        // Defender's client: my one last guess at the first mover's secret.
+        public void SubmitLastGuess(int[] guess)
+        {
+            var extra = new JObject { ["guessDigits"] = FirestoreClient.StringField(EncodeGuess(guess)) };
+            WriteBaseDoc("last_guess", extra);
+        }
+
+        // First mover's client, after judging the last guess: it was right, so nobody wins.
+        public void SubmitDraw()
+        {
+            _winner = "draw";
+            var extra = new JObject
+            {
+                ["winner"] = FirestoreClient.StringField(_winner),
+                ["reason"] = FirestoreClient.StringField(GameOverByDraw)
+            };
+            WriteBaseDoc("finished", extra);
+            OnGameOver?.Invoke(MySide, GameOverByDraw);   // my own write never comes back through my own poll
+        }
+
+        // ---------- rematch vote (after a draw) ----------
+        // Each side writes its answer ("yes" / "no") into its own field of the finished match document
+        // (field-masked patches, so the two answers can't overwrite each other). Once both said yes the
+        // first mover creates the next match document -- with the sides swapped, so whoever moved second
+        // now moves first -- and publishes its id in `nextMatchId` for the other side to pick up.
+
+        private const float RematchPollSeconds = 1f;
+        private const float RematchTimeoutSeconds = 45f;   // how long a "yes" waits for an answer
+
+        private Coroutine _rematchRoutine;
+        private string _myRematchVote = "";
+        private bool _opponentRematchAnnounced;
+        private bool _rematchEnded;
+        private bool _rematchCreating;
+        private float _rematchRequestedAt;
+
+        private string RematchField(MatchSide side) => side == MatchSide.A ? "rematchA" : "rematchB";
+
+        // Starts listening for the opponent's answer. Call once the match is over (and Stop() was called).
+        public void BeginRematchVote()
+        {
+            StopRematchVote();
+            _myRematchVote = "";
+            _opponentRematchAnnounced = false;
+            _rematchEnded = false;
+            _rematchCreating = false;
+            _rematchRoutine = _host.StartCoroutine(RematchLoop());
+        }
+
+        public void StopRematchVote()
+        {
+            if (_rematchRoutine != null)
+            {
+                _host.StopCoroutine(_rematchRoutine);
+                _rematchRoutine = null;
+            }
+        }
+
+        public void RequestRematch(Action<string> onError)
+        {
+            if (_rematchRoutine == null || _rematchEnded) return;
+            _myRematchVote = "yes";
+            _rematchRequestedAt = Time.realtimeSinceStartup;
+            WriteRematchVote("yes", error =>
+            {
+                _myRematchVote = "";   // not recorded: let the player try again
+                onError?.Invoke(error);
+            });
+        }
+
+        // Backing out (leaving the result popup) counts as a "no".
+        public void DeclineRematch()
+        {
+            if (_rematchRoutine == null || _rematchEnded || _myRematchVote == "no") return;
+            _myRematchVote = "no";
+            WriteRematchVote("no", null);
+        }
+
+        private void WriteRematchVote(string vote, Action<string> onError)
+        {
+            string field = RematchField(MySide);
+            var fields = new JObject { [field] = FirestoreClient.StringField(vote) };
+            _db.PatchFields(DocPath, fields, new[] { field }, null, error => onError?.Invoke(error));
+        }
+
+        private IEnumerator RematchLoop()
+        {
+            while (true)
+            {
+                PollRematchOnce();
+                yield return new WaitForSecondsRealtime(RematchPollSeconds);
+            }
+        }
+
+        private void PollRematchOnce()
+        {
+            _db.GetDocument(DocPath, doc =>
+            {
+                if (doc == null || _rematchEnded || _myRematchVote == "no") return;
+
+                string theirs = FirestoreClient.ReadString(doc, RematchField(OpponentSide), "");
+                string next = FirestoreClient.ReadString(doc, "nextMatchId", "");
+
+                if (theirs == "no")
+                {
+                    _rematchEnded = true;
+                    OnRematchDeclined?.Invoke(false);
+                    return;
+                }
+                if (theirs == "yes" && !_opponentRematchAnnounced)
+                {
+                    _opponentRematchAnnounced = true;
+                    OnRematchRequestedByOpponent?.Invoke();
+                }
+                if (!string.IsNullOrEmpty(next) && _myRematchVote == "yes")
+                {
+                    _rematchEnded = true;
+                    OnRematchReady?.Invoke(next);
+                    return;
+                }
+                if (theirs == "yes" && _myRematchVote == "yes" && MySide == FirstMover && !_rematchCreating)
+                {
+                    CreateRematchMatch();
+                    return;
+                }
+                if (_myRematchVote == "yes" && theirs == "" &&
+                    Time.realtimeSinceStartup - _rematchRequestedAt > RematchTimeoutSeconds)
+                {
+                    _rematchEnded = true;
+                    OnRematchDeclined?.Invoke(true);
+                }
+            }, _ => { });
+        }
+
+        private void CreateRematchMatch()
+        {
+            _rematchCreating = true;
+            string newId = Guid.NewGuid().ToString("N");
+            var matchFields = new JObject
+            {
+                ["playerA"] = FirestoreClient.StringField(PlayerB),   // sides swap: the old second mover opens
+                ["playerB"] = FirestoreClient.StringField(PlayerA),
+                ["status"] = FirestoreClient.StringField("matched")
+            };
+            _db.SetDocument($"matches/{newId}", matchFields, () =>
+            {
+                var pointer = new JObject { ["nextMatchId"] = FirestoreClient.StringField(newId) };
+                _db.PatchFields(DocPath, pointer, new[] { "nextMatchId" }, () =>
+                {
+                    if (_rematchEnded) return;
+                    _rematchEnded = true;
+                    OnRematchReady?.Invoke(newId);
+                }, FailRematch);
+            }, FailRematch);
+        }
+
+        // Creating the next match failed (e.g. firestore.rules without the rematch fields): end the vote
+        // instead of retrying every second and leaving a trail of orphan match documents.
+        private void FailRematch(string error)
+        {
+            _rematchEnded = true;
+            _rematchCreating = false;
+            OnRematchError?.Invoke(error);
         }
 
         // ---------- Rogue ----------

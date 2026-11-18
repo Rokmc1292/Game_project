@@ -8,8 +8,10 @@ namespace LiarsBatting.Progression
     {
         public HeroId Hero;
         public bool Online;
+        public int AiTier;               // AI matches: 0 = 초급, 1 = 중수, 2 = 고수 (a win against a harder AI pays more XP)
         public bool Won;
-        public bool WonByGuess;          // the win came from guessing the secret (not reveals/surrender)
+        public bool Draw;                // both sides found each other's secret in the same round (see MatchRules)
+        public bool WonByGuess;         // the win came from guessing the secret (not reveals/surrender)
         public bool Surrendered;         // I pressed 항복
         public float DurationSeconds;    // match clock at the end
 

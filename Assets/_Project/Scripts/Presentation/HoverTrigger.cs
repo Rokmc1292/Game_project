@@ -14,5 +14,9 @@ namespace LiarsBatting.Presentation
 
         public void OnPointerEnter(PointerEventData eventData) => OnEnter?.Invoke();
         public void OnPointerExit(PointerEventData eventData) => OnExit?.Invoke();
+
+        // When the thing under the mouse is switched off (the match ends, a screen changes), no exit event is
+        // ever sent -- so a tooltip or history popup opened by hovering would stay up for good.
+        private void OnDisable() => OnExit?.Invoke();
     }
 }

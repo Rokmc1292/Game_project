@@ -36,6 +36,12 @@ namespace LiarsBatting.Network
             if (string.IsNullOrWhiteSpace(name)) return "닉네임을 입력해주세요.";
             if (name.Contains("/") || name == "." || name == ".." || (name.StartsWith("__") && name.EndsWith("__")))
                 return "닉네임에 쓸 수 없는 문자가 있습니다. ('/', '.', '..' 등)";
+            if (name.Length > 20) return "닉네임은 20자 이하로 정해주세요.";
+            // The name is also part of a web address: '#', '?', '%', '&', spaces and the like would break it
+            // (the account would stop loading for good). Letters (Korean included), digits and '_' only.
+            foreach (char c in name)
+                if (!(char.IsLetterOrDigit(c) || c == '_'))
+                    return "닉네임에는 한글, 영문, 숫자, 밑줄(_)만 쓸 수 있습니다.";
             return null;
         }
 
@@ -61,6 +67,7 @@ namespace LiarsBatting.Network
             if (Enum.TryParse(icon, out HeroId hero)) profile.ProfileIcon = hero;
             profile.Wins = (int)FirestoreClient.ReadInt(doc, "wins", 0);
             profile.Losses = (int)FirestoreClient.ReadInt(doc, "losses", 0);
+            profile.Draws = (int)FirestoreClient.ReadInt(doc, "draws", 0);
 
             string json = FirestoreClient.ReadString(doc, "progress", "");
             if (!string.IsNullOrEmpty(json))
@@ -116,13 +123,18 @@ namespace LiarsBatting.Network
         private static readonly string[] ProgressFieldPaths = { "progress", "level", "title" };
 
         // A finished match: XP, level, challenges, and (online only) the record against people.
-        public void SettleMatch(string nickname, MatchStats stats, Action<MatchSettlement> onSettled)
+        // onFailed: the profile couldn't be loaded, so nothing was earned or saved (the result popup says so
+        // instead of waiting forever on "경험치 계산 중...").
+        public void SettleMatch(string nickname, MatchStats stats, Action<MatchSettlement> onSettled,
+            Action<string> onFailed = null)
         {
             WithCurrent(nickname, profile =>
             {
                 if (stats.Online)
                 {
-                    if (stats.Won) profile.Wins++; else profile.Losses++;
+                    if (stats.Draw) profile.Draws++;
+                    else if (stats.Won) profile.Wins++;
+                    else profile.Losses++;
                 }
                 // null when an early surrender earns nothing (see ProgressionService.EarnsProgress).
                 var settlement = ProgressionService.EarnsProgress(stats)
@@ -133,12 +145,29 @@ namespace LiarsBatting.Network
                 fields["wins"] = FirestoreClient.IntField(profile.Wins);
                 fields["losses"] = FirestoreClient.IntField(profile.Losses);
                 fields["lastSeen"] = FirestoreClient.IntField(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-                var paths = new[] { "progress", "level", "title", "wins", "losses", "lastSeen" };
-                _db.PatchFields(PathOf(nickname), fields, paths,
-                    null, error => Debug.LogWarning($"진행도 저장 실패: {error}"));
+                var paths = new System.Collections.Generic.List<string> { "progress", "level", "title", "wins", "losses", "lastSeen" };
+                // Only written once a draw has happened: a client whose firestore.rules predate the
+                // draw field would otherwise have every settle rejected, draws or not.
+                if (profile.Draws > 0)
+                {
+                    fields["draws"] = FirestoreClient.IntField(profile.Draws);
+                    paths.Add("draws");
+                }
+                _db.PatchFields(PathOf(nickname), fields, paths.ToArray(), null, error =>
+                {
+                    Debug.LogWarning($"진행도 저장 실패: {error}");
+                    // The local copy already counts this match but the server doesn't. Drop it so the next use
+                    // reloads the server's numbers: left as is, the NEXT save would claim two wins at once and
+                    // be refused by firestore.rules (a record may only grow by one per save).
+                    if (Current == profile) Current = null;
+                });
 
                 onSettled?.Invoke(settlement);
-            }, error => Debug.LogWarning($"진행도 저장 실패(프로필 읽기): {error}"));
+            }, error =>
+            {
+                Debug.LogWarning($"진행도 저장 실패(프로필 읽기): {error}");
+                onFailed?.Invoke(error);
+            });
         }
 
         public void Equip(string nickname, RewardInfo reward, Action onSaved, Action<string> onError)
