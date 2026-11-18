@@ -119,22 +119,42 @@ namespace LiarsBatting.Presentation
             _scrollRect.verticalNormalizedPosition = 0f;
         }
 
-        // Builds one guess row (digits + strike/ball/out lamps + optional "거짓" badge) under any parent.
+        private enum Verdict { None, Lie, Truth }
+
+        // Builds one guess row under any parent: [digits][lamps] ...... [verdict word].
+        // The verdict is just the word itself at the right end of the row: "거짓" in red or "진실"
+        // in green. Unverified rows show no word.
         public static RectTransform BuildRow(Transform parent, int[] guess, JudgeResult reported, bool wasLie, bool revealLie = true, bool truthConfirmed = false)
         {
-            var row = UiFactory.HorizontalGroup(parent, "Row", spacing: 6);
-            UiFactory.SetHeight(row, 28);
+            var verdict = wasLie && revealLie ? Verdict.Lie : truthConfirmed ? Verdict.Truth : Verdict.None;
 
-            var guessText = UiFactory.Text(row, string.Join(" ", guess), 13, UITheme.Ink, TextAnchor.MiddleLeft);
+            var row = UiFactory.HorizontalGroup(parent, "Row", spacing: 6, padding: new RectOffset(4, 6, 0, 0));
+            UiFactory.SetHeight(row, 30);
+            var rowImage = row.gameObject.AddComponent<Image>();
+            rowImage.raycastTarget = false;
+            rowImage.color = UITheme.PlainRowBg;   // faint band so rows stay apart
+
+            var guessText = UiFactory.Text(row, string.Join(" ", guess), 13, UITheme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
             UiFactory.SetWidth(guessText, 72);
 
             // Same lamps as the popups, compact: top row balls (green), bottom row strikes (orange).
             ResultLamps.Build(row, reported, 11f, labels: false);
 
-            if (wasLie && revealLie)
-                UiFactory.Badge(row, "거짓", UITheme.ClaySoft, UITheme.Clay);
-            else if (truthConfirmed)
-                UiFactory.Badge(row, "진실", UITheme.BallBg, UITheme.BallFg);
+            var spacer = UiFactory.Panel(row, "Spacer", Color.clear);
+            spacer.GetComponent<Image>().raycastTarget = false;
+            UiFactory.SetFlexible(spacer, 1, 0);
+
+            if (verdict != Verdict.None)
+            {
+                bool lie = verdict == Verdict.Lie;
+                var word = UiFactory.Text(row, lie ? "거짓" : "진실", 15, lie ? UITheme.LieInk : UITheme.TruthInk,
+                    TextAnchor.MiddleRight, FontStyle.Bold);
+                word.raycastTarget = false;
+                UiFactory.SetWidth(word, 40);
+                var shadow = word.gameObject.AddComponent<Shadow>();
+                shadow.effectColor = new Color(0f, 0f, 0f, 0.8f);
+                shadow.effectDistance = new Vector2(1f, -1f);
+            }
 
             return row;
         }

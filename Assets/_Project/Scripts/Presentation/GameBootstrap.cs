@@ -108,7 +108,11 @@ namespace LiarsBatting.Presentation
         private HeroPortraitView _opponentHeroPortrait;
         private bool _myTurnActive;   // true while it's my attack turn (gates the Priest ability button)
 
+        // Status line of the (hidden) header bar. Still written everywhere because the HUD's
+        // "내 턴 / 상대 턴" label is derived from it.
         private Text _headerText;
+        private Text _setupDescription;
+        private const string SetupDescription = "0~9 중 중복 없는 숫자 4개. 상대는 이 번호를 볼 수 없습니다.";
         private GameObject _turnAnnouncementRoot;
         private Image _turnAnnouncementBackdrop;
         private Text _turnAnnouncementText;
@@ -219,14 +223,20 @@ namespace LiarsBatting.Presentation
             _tokenText = UiFactory.Text(row, "", 13, UITheme.Muted, TextAnchor.MiddleRight);
             UiFactory.SetSize(_tokenText, 220, 30);
 
-            _surrenderButton = UiFactory.Button(row, "항복", UITheme.Clay, Color.white, OnSurrenderClicked, 13);
-            UiFactory.SetSize(_surrenderButton, 70, 30);
-            _surrenderButton.gameObject.SetActive(false); // only shown while a match is actually underway
+            // The bar itself is no longer shown: every screen already says what it is. Its texts stay
+            // (inactive) because game logic still writes the status line and the HUD reads it.
+            header.gameObject.SetActive(false);
 
-            // The main menu has its own settings button; this one covers hero pick, secret pick
-            // and the match itself, so volume can be changed without leaving the game.
-            _headerSettingsButton = UiFactory.Button(row, "설정", UITheme.Surface2, UITheme.Ink, ShowSoundSettings, 13);
-            UiFactory.SetSize(_headerSettingsButton, 70, 30);
+            // The main menu has its own settings button and the match screen has one on the table
+            // (next to surrender, see BuildMatchScreen); this one floats in the top-right corner for
+            // hero pick and secret pick.
+            _headerSettingsButton = UiFactory.Button(root, "설정", UITheme.Accent, Color.white, ShowSoundSettings, 15);
+            MenuButtonStyle.ApplyChoice(_headerSettingsButton, UITheme.Accent);
+            var settingsRt = (RectTransform)_headerSettingsButton.transform;
+            settingsRt.anchorMin = settingsRt.anchorMax = new Vector2(1, 1);
+            settingsRt.pivot = new Vector2(1, 1);
+            settingsRt.anchoredPosition = new Vector2(-16, -16);
+            settingsRt.sizeDelta = new Vector2(108, 40);
             _headerSettingsButton.gameObject.SetActive(false);
         }
 
@@ -238,7 +248,7 @@ namespace LiarsBatting.Presentation
             rt.anchorMin = Vector2.zero;
             rt.anchorMax = Vector2.one;
             rt.offsetMin = Vector2.zero;
-            rt.offsetMax = new Vector2(0, -56);
+            rt.offsetMax = Vector2.zero;   // full height: there is no header bar any more
             return go;
         }
 
@@ -640,7 +650,8 @@ namespace LiarsBatting.Presentation
         }
 
         // Shadowed title, a muted one- or two-line description, and a thin divider.
-        private static void AddLobbyTitle(Transform content, string title, string description)
+        // Returns the description line, for screens that change it later.
+        private static Text AddLobbyTitle(Transform content, string title, string description)
         {
             var titleText = UiFactory.Text(content, title, 24, UITheme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
             UiFactory.SetHeight(titleText, 34);
@@ -650,6 +661,7 @@ namespace LiarsBatting.Presentation
             var divider = UiFactory.Panel(content, "Divider", UITheme.Border);
             UiFactory.SetHeight(divider, 1);
             divider.GetComponent<Image>().raycastTarget = false;
+            return descText;
         }
 
         // While the random-match screen is up: a highlight walks across the four face-down cards
@@ -1385,7 +1397,7 @@ namespace LiarsBatting.Presentation
             rt.anchorMin = Vector2.zero;
             rt.anchorMax = Vector2.one;
             rt.offsetMin = new Vector2(0, 0);
-            rt.offsetMax = new Vector2(0, -56);
+            rt.offsetMax = Vector2.zero;   // full height: there is no header bar any more
 
             // Brass-bordered plate like the other lobby screens, nudged down so the big countdown
             // number under the header stays clear of it.
@@ -1400,7 +1412,7 @@ namespace LiarsBatting.Presentation
                 padding: new RectOffset(40, 40, 22, 20), childAlign: TextAnchor.UpperCenter);
             UiFactory.StretchToFillParent(centered);
 
-            AddLobbyTitle(centered, "비밀번호 4자리를 정하세요", "0~9 중 중복 없는 숫자 4개. 상대는 이 번호를 볼 수 없습니다.");
+            _setupDescription = AddLobbyTitle(centered, "비밀번호 4자리를 정하세요", SetupDescription);
 
             _setupPicker = new CardPickerView(centered, "내 비밀번호", "게임 시작", OnSecretChosen);
         }
@@ -1419,6 +1431,11 @@ namespace LiarsBatting.Presentation
             _headerText.text = opponentIsDemonHunter
                 ? "비밀번호 준비 — 상대 능력으로 9는 사용할 수 없습니다"
                 : "비밀번호 준비";
+            // The header bar is hidden, so the DemonHunter restriction is spelled out on the screen itself.
+            _setupDescription.text = opponentIsDemonHunter
+                ? "상대가 데몬헌터라서 이번 판에는 9를 쓸 수 없습니다."
+                : SetupDescription;
+            _setupDescription.color = opponentIsDemonHunter ? UITheme.Clay : UITheme.Muted;
             _tokenText.text = "";
 
             _timer.Start(SecretPickSeconds, () =>
@@ -1438,7 +1455,7 @@ namespace LiarsBatting.Presentation
             rt.anchorMin = Vector2.zero;
             rt.anchorMax = Vector2.one;
             rt.offsetMin = Vector2.zero;
-            rt.offsetMax = new Vector2(0, -56);
+            rt.offsetMax = Vector2.zero;   // full height: there is no header bar any more
 
             // Everything sits on a fixed-size stage (see MatchHudView for the layout).
             _statusPanel = new MatchHudView(rt, this);
@@ -1449,6 +1466,11 @@ namespace LiarsBatting.Presentation
 
             _myHeroPortrait = new HeroPortraitView(stage, isMine: true);
             _statusPanel.PlaceMyHero(_myHeroPortrait.Root);
+
+            // Settings + surrender sit on the table itself (top-right), not in the header bar.
+            var corner = _statusPanel.BuildCornerButtons(ShowSoundSettings, OnSurrenderClicked);
+            _surrenderButton = corner.surrender;
+            _surrenderButton.gameObject.SetActive(false); // only shown while a match is actually underway
 
             _attackPicker = new CardPickerView(_statusPanel.GuessSlotsHolder, _statusPanel.TrayHolder,
                 "추측 제출", OnPlayerGuessSubmitted, new Vector2(76, 106), new Vector2(64, 86));
@@ -1718,14 +1740,21 @@ namespace LiarsBatting.Presentation
             _timer.ShowBadge = target != _matchScreen; // the hourglass replaces the header badge in a match
             _surrenderButton.gameObject.SetActive(false); // re-shown once the match actually starts
             _headerSettingsButton.gameObject.SetActive(
-                target == _heroSelectScreen || target == _setupScreen || target == _matchScreen);
+                target == _heroSelectScreen || target == _setupScreen);   // the match has its own on the table
+            _headerSettingsButton.transform.SetAsLastSibling();   // built before the screens, so lift it above them
         }
 
         private void OnSurrenderClicked()
         {
-            _choiceOverlay.ShowMixed("정말 항복하시겠습니까?\n항복하면 패배로 처리됩니다.",
-                ("항복", UITheme.Clay, Surrender),
-                ("계속 플레이", UITheme.Accent, () => { }));
+            // Say up front when surrendering now would also forfeit the match's XP.
+            float elapsed = _matchClockRunning ? Time.unscaledTime - _matchStartTime : 0f;
+            float left = LevelTable.MinSurrenderSecondsForXp - elapsed;
+            string warning = left > 0f
+                ? $"\n지금 항복하면 경험치와 도전과제 진행도 받지 못합니다. (경험치까지 {Mathf.CeilToInt(left / 60f)}분 남음)"
+                : "\n경험치는 패배 기준으로 받습니다.";
+            _choiceOverlay.ShowMixed("정말 항복하시겠습니까?\n항복하면 패배로 처리됩니다." + warning,
+                ("계속 플레이", UITheme.Accent, () => { }),
+                ("항복", UITheme.Clay, Surrender));
         }
 
         private void Surrender()

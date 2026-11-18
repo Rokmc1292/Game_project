@@ -30,6 +30,12 @@ namespace LiarsBatting.Presentation
         public static readonly Color BallLamp = Hex("3FCB6B");
         public static readonly Color LampOff = Hex("3A342C");
 
+        // Guess-history verdicts (ScrollingHistoryColumn): the "거짓" / "진실" word colours, and the
+        // faint band behind every row.
+        public static readonly Color LieInk = Hex("FF6B57");
+        public static readonly Color TruthInk = Hex("5FD38D");
+        public static readonly Color PlainRowBg = Hex("FFFFFF0A");
+
         public static Color Hex(string hex)
         {
             ColorUtility.TryParseHtmlString("#" + hex, out var c);

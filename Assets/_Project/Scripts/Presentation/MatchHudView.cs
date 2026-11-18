@@ -110,6 +110,28 @@ namespace LiarsBatting.Presentation
             Place(TrayHolder, 888, 362, 364, 258);
         }
 
+        // Settings + surrender, in the stage's top-right corner (right edge lines up with the
+        // right panel). Same charcoal/brass plates as the choice popups; surrender uses the
+        // clay "lie / decline" plate so it reads as the dangerous one.
+        public (Button settings, Button surrender) BuildCornerButtons(System.Action onSettings, System.Action onSurrender)
+        {
+            var settings = CornerButton("설정", UITheme.Accent, onSettings);
+            Place((RectTransform)settings.transform, 1040, 16, 108, 40);
+            var surrender = CornerButton("항복", UITheme.Clay, onSurrender);
+            Place((RectTransform)surrender.transform, 1156, 16, 108, 40);
+            return (settings, surrender);
+        }
+
+        private Button CornerButton(string label, Color semantic, System.Action onClick)
+        {
+            var button = UiFactory.Button(Stage, label, semantic, Color.white, onClick, 15);
+            MenuButtonStyle.ApplyChoice(button, semantic);
+            var shadow = button.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.6f);
+            shadow.effectDistance = new Vector2(2f, -3f);
+            return button;
+        }
+
         public void PlaceOpponentHero(RectTransform hero) => Place(hero, 340, 14, 90, 142);
         public void PlaceMyHero(RectTransform hero) => Place(hero, 302, 512, 90, 142);
 

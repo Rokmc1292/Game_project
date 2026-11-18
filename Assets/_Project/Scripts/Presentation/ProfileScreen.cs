@@ -103,7 +103,7 @@ namespace LiarsBatting.Presentation
             rootRt.anchorMin = Vector2.zero;
             rootRt.anchorMax = Vector2.one;
             rootRt.offsetMin = Vector2.zero;
-            rootRt.offsetMax = new Vector2(0, -56);   // below the header
+            rootRt.offsetMax = Vector2.zero;   // full height: there is no header bar any more
 
             var panel = UiFactory.Panel(rootRt, "ProfilePanel", UITheme.Surface2);
             panel.anchorMin = new Vector2(0.5f, 0.5f);

@@ -38,7 +38,7 @@ namespace LiarsBatting.Presentation
             rt.anchorMin = new Vector2(0.5f, 1f);
             rt.anchorMax = new Vector2(0.5f, 1f);
             rt.pivot = new Vector2(0.5f, 1f);
-            rt.anchoredPosition = new Vector2(0f, -58f);
+            rt.anchoredPosition = new Vector2(0f, -12f);   // near the top edge (no header bar)
             rt.sizeDelta = new Vector2(240f, 60f);
 
             _text = UiFactory.Text(rt, "", 56, Brass, TextAnchor.MiddleCenter, FontStyle.Bold);
