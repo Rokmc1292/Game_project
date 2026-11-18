@@ -4,77 +4,87 @@ using UnityEngine.UI;
 
 namespace LiarsBatting.Presentation
 {
-    // The "reveal one of your digits" penalty, as my four secret cards laid out in their real
-    // order. Hidden cards can be picked (hover lifts them, a click selects with a brass frame);
-    // cards that are already public are dimmed and marked "공개됨". onSelected gets the index.
-    public static class RevealCardPicker
+    // Clickable cards for every "pick one" step in a popup (which of my digits to reveal, which
+    // position / digit the Priest asks about). Hover lifts a card, a click selects it with a
+    // brass frame; disabled cards are dimmed and can't be picked. onSelected gets the index.
+    public static class CardChoice
     {
-        private const float CardWidth = 76f;
-        private const float CardHeight = 106f;
         private const float Frame = 4f;
 
         private static readonly Color FrameIdle = new Color(0, 0, 0, 0);
         private static readonly Color FrameHover = new Color32(214, 160, 70, 110);
         private static readonly Color FrameSelected = new Color32(255, 196, 84, 255);
 
-        public static RectTransform Build(Transform parent, int[] secret, bool[] revealed, Action<int> onSelected)
+        // columns: cards per row (the rest wrap to further rows). captions may be null.
+        public static RectTransform Build(Transform parent, Sprite[] faces, bool[] disabled, string[] captions,
+            Vector2 cardSize, int columns, Action<int> onSelected)
         {
-            var row = UiFactory.HorizontalGroup(parent, "RevealCards", spacing: 16, childAlign: TextAnchor.MiddleCenter);
-            row.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = false;
-            UiFactory.SetSize(row, 4 * (CardWidth + 2 * Frame) + 3 * 16, CardHeight + 2 * Frame + 12 + 22);
+            int count = faces.Length;
+            float gap = cardSize.x >= 60f ? 16f : 10f;
+            float lift = Mathf.Round(cardSize.y * 0.1f);
+            float captionH = captions != null ? 22f : 0f;
+            float cellW = cardSize.x + 2 * Frame;
+            float slotH = cardSize.y + 2 * Frame + lift;
+            float cellH = slotH + (captions != null ? 4f + captionH : 0f);
+            int rows = Mathf.CeilToInt(count / (float)columns);
 
-            var frames = new Image[secret.Length];
-            var cards = new RectTransform[secret.Length];
+            var grid = UiFactory.VerticalGroup(parent, "CardChoice", spacing: 4, childAlign: TextAnchor.MiddleCenter);
+            grid.GetComponent<VerticalLayoutGroup>().childForceExpandWidth = false;
+            UiFactory.SetSize(grid, columns * cellW + (columns - 1) * gap, rows * cellH + (rows - 1) * 4);
+
+            var frames = new Image[count];
+            var cards = new RectTransform[count];
             int selected = -1;
 
             void Repaint(int hovered)
             {
-                for (int i = 0; i < frames.Length; i++)
+                for (int i = 0; i < count; i++)
                 {
-                    if (revealed[i]) continue;
+                    if (disabled != null && disabled[i]) continue;
                     frames[i].color = i == selected ? FrameSelected : i == hovered ? FrameHover : FrameIdle;
                     // Selected/hovered cards rise a little, like being pulled from the hand.
-                    float lift = i == selected ? 10f : i == hovered ? 5f : 0f;
-                    cards[i].anchoredPosition = new Vector2(0, lift);
+                    cards[i].anchoredPosition = new Vector2(0, i == selected ? lift : i == hovered ? lift / 2f : 0f);
                 }
             }
 
-            for (int i = 0; i < secret.Length; i++)
+            RectTransform row = null;
+            for (int i = 0; i < count; i++)
             {
+                if (i % columns == 0)
+                {
+                    row = UiFactory.HorizontalGroup(grid, "Row", spacing: gap, childAlign: TextAnchor.MiddleCenter);
+                    row.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = false;
+                    UiFactory.SetHeight(row, cellH);
+                }
+
                 int index = i;
+                bool off = disabled != null && disabled[i];
                 var column = UiFactory.VerticalGroup(row, "Card" + i, spacing: 4, childAlign: TextAnchor.UpperCenter);
                 column.GetComponent<VerticalLayoutGroup>().childForceExpandWidth = false;
-                UiFactory.SetSize(column, CardWidth + 2 * Frame, CardHeight + 2 * Frame + 12 + 22);
+                UiFactory.SetSize(column, cellW, cellH);
 
                 // Fixed-size slot; the card inside moves freely (no layout) so it can lift.
                 var slot = UiFactory.Panel(column, "Slot", Color.clear);
-                UiFactory.SetSize(slot, CardWidth + 2 * Frame, CardHeight + 2 * Frame + 12);
+                slot.GetComponent<Image>().raycastTarget = false;
+                UiFactory.SetSize(slot, cellW, slotH);
 
                 var card = UiFactory.Panel(slot, "Frame", FrameIdle);
                 card.anchorMin = card.anchorMax = new Vector2(0.5f, 0f);
                 card.pivot = new Vector2(0.5f, 0f);
-                card.sizeDelta = new Vector2(CardWidth + 2 * Frame, CardHeight + 2 * Frame);
+                card.sizeDelta = new Vector2(cellW, cardSize.y + 2 * Frame);
                 frames[i] = card.GetComponent<Image>();
                 cards[i] = card;
 
-                var face = UiFactory.Panel(card, "Face", CardArt.Tint);
-                UiFactory.StretchToFillParent(face);
+                var face = PopupParts.CardFace(card, faces[i]);
                 face.offsetMin = new Vector2(Frame, Frame);
                 face.offsetMax = new Vector2(-Frame, -Frame);
                 var faceImage = face.GetComponent<Image>();
-                faceImage.sprite = CardArt.Digit(secret[i]);
-                faceImage.preserveAspect = true;
-                faceImage.raycastTarget = false;
 
-                string caption = $"{i + 1}번째";
-                Color captionColor = UITheme.Muted;
-                if (revealed[i])
+                if (off)
                 {
                     var tint = CardArt.Tint;
                     faceImage.color = new Color(tint.r * 0.45f, tint.g * 0.45f, tint.b * 0.45f, 0.6f);
                     frames[i].raycastTarget = false;
-                    caption = "공개됨";
-                    captionColor = new Color(UITheme.Muted.r, UITheme.Muted.g, UITheme.Muted.b, 0.6f);
                 }
                 else
                 {
@@ -93,11 +103,33 @@ namespace LiarsBatting.Presentation
                     hover.OnExit = () => Repaint(-1);
                 }
 
-                var label = UiFactory.Text(column, caption, 13, captionColor, TextAnchor.MiddleCenter, FontStyle.Bold);
-                UiFactory.SetSize(label, CardWidth + 2 * Frame, 22);
+                if (captions != null)
+                {
+                    var c = UITheme.Muted;
+                    var label = UiFactory.Text(column, captions[i], 13, off ? new Color(c.r, c.g, c.b, 0.6f) : c,
+                        TextAnchor.MiddleCenter, FontStyle.Bold);
+                    UiFactory.SetSize(label, cellW, captionH);
+                }
             }
             Repaint(-1);
-            return row;
+            return grid;
+        }
+    }
+
+    // The "reveal one of your digits" penalty: my four secret cards in their real order, the
+    // already-public ones dimmed and marked "공개됨".
+    public static class RevealCardPicker
+    {
+        public static RectTransform Build(Transform parent, int[] secret, bool[] revealed, Action<int> onSelected)
+        {
+            var faces = new Sprite[secret.Length];
+            var captions = new string[secret.Length];
+            for (int i = 0; i < secret.Length; i++)
+            {
+                faces[i] = CardArt.Digit(secret[i]);
+                captions[i] = revealed[i] ? "공개됨" : $"{i + 1}번째";
+            }
+            return CardChoice.Build(parent, faces, revealed, captions, PopupParts.BigCard, 4, onSelected);
         }
     }
 }

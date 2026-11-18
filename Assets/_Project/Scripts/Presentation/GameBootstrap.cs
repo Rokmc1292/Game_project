@@ -112,6 +112,7 @@ namespace LiarsBatting.Presentation
         // "내 턴 / 상대 턴" label is derived from it.
         private Text _headerText;
         private Text _setupDescription;
+        private (int position, int digit) _lastPriestQuery;   // shown again when the online answer arrives
         private const string SetupDescription = "0~9 중 중복 없는 숫자 4개. 상대는 이 번호를 볼 수 없습니다.";
         private GameObject _turnAnnouncementRoot;
         private Image _turnAnnouncementBackdrop;
@@ -1090,8 +1091,7 @@ namespace LiarsBatting.Presentation
             _network.OnPriestAnswer += answer =>
             {
                 if (answer) _stats.PriestYes++;
-                string text = answer ? "맞습니다" : "아닙니다";
-                _choiceOverlay.Show($"상대의 답변: \"{text}\"", ("확인", () => { }));
+                ShowPriestAnswer(_lastPriestQuery.position, _lastPriestQuery.digit, answer, () => { });
             };
 
             // Wizard: opponent used their ability, so I must reveal one of my own
@@ -1618,15 +1618,25 @@ namespace LiarsBatting.Presentation
 
         private void ShowMyAbilityDescription()
         {
-            var info = HeroCatalog.Get(_state.PlayerHero);
-            _choiceOverlay.Show($"{info.AbilityName} (패시브)\n{info.AbilityDescription}\n\n별도로 사용하지 않아도 자동으로 적용됩니다.",
-                ("확인", () => { }));
+            var hero = _state.PlayerHero;
+            var info = HeroCatalog.Get(hero);
+            _choiceOverlay.ShowWithContent("", slot =>
+                {
+                    PopupParts.AbilityHeading(slot, hero);
+                    PopupParts.Description(slot, $"{info.AbilityDescription}\n패시브 — 따로 사용하지 않아도 자동으로 적용됩니다.");
+                },
+                ("확인", UITheme.Accent, () => { }));
         }
 
         // Rogue's ability needs a response to judge, so it can't be fired from here.
         private void ShowRogueUsageHint()
         {
-            _choiceOverlay.Show("진실 간파는 상대의 응답을 판단하는 선택창에서\n'진실 간파' 버튼으로 사용합니다.", ("확인", () => { }));
+            _choiceOverlay.ShowWithContent("", slot =>
+                {
+                    PopupParts.AbilityHeading(slot, HeroId.Rogue);
+                    PopupParts.Description(slot, "상대가 결과를 알려주면 뜨는 '믿는다 / 의심' 선택창에서\n'진실 간파' 버튼으로 사용합니다.");
+                },
+                ("확인", UITheme.Accent, () => { }));
         }
 
         private static int PickRandomOpenIndex(bool[] revealed)
@@ -1645,28 +1655,75 @@ namespace LiarsBatting.Presentation
             RefreshMyAbilityUI();
         }
 
+        // First step: the opponent's four cards as I know them ("?" = still hidden). Already-open
+        // positions are dimmed -- there's nothing left to ask about them. A click goes straight on.
         private void ShowPriestPositionPicker()
         {
-            var buttons = new (string, Action)[4];
+            var faces = new Sprite[4];
+            var captions = new string[4];
             for (int i = 0; i < 4; i++)
             {
-                int pos = i;
-                buttons[i] = ($"{pos + 1}번째 자리", () => ShowPriestDigitGuessPicker(pos));
+                faces[i] = _state.AiRevealed[i] ? CardArt.Digit(_state.AiSecret[i]) : CardArt.Unknown();
+                captions[i] = _state.AiRevealed[i] ? "공개됨" : $"{i + 1}번째";
             }
-            _choiceOverlay.Show("어느 자리를 물어볼까요?", buttons);
+            _choiceOverlay.ShowWithContent("어느 자리를 물어볼까요?", slot =>
+                {
+                    PopupParts.AbilityHeading(slot, HeroId.Priest);
+                    CardChoice.Build(slot, faces, (bool[])_state.AiRevealed.Clone(), captions, PopupParts.BigCard, 4,
+                        pos => StartCoroutine(NextFrame(() => ShowPriestDigitGuessPicker(pos))));
+                },
+                ("취소", UITheme.Accent, () => { }));
         }
 
-        // Second step: guess a specific digit for that position ("2번째 자리
-        // 숫자 5지?") instead of asking an open "what's the digit" question.
+        // Rebuilding the popup from inside one of its own click handlers is deferred a frame
+        // (same reason as ShowRogueResultNextFrame).
+        private static System.Collections.IEnumerator NextFrame(Action action)
+        {
+            yield return null;
+            action();
+        }
+
+        // Second step: guess a specific digit for that position ("2번째 자리 숫자 5지?") instead of
+        // asking an open "what's the digit" question. Digits already open at another position can't
+        // be the answer here (every digit is unique), so they're dimmed.
         private void ShowPriestDigitGuessPicker(int position)
         {
-            var options = new List<(string, Action)>();
-            for (int d = 0; d <= 9; d++)
-            {
-                int digit = d;
-                options.Add((digit.ToString(), () => OnPriestQuerySubmitted(position, digit)));
-            }
-            _choiceOverlay.Show($"{position + 1}번째 자리, 어떤 숫자일지 물어볼까요?", options.ToArray());
+            var faces = new Sprite[10];
+            var known = new bool[10];
+            for (int d = 0; d <= 9; d++) faces[d] = CardArt.Digit(d);
+            for (int i = 0; i < 4; i++)
+                if (_state.AiRevealed[i] && i != position) known[_state.AiSecret[i]] = true;
+
+            int chosen = -1;
+            Text status = null;
+            Button[] buttons = null;
+            buttons = _choiceOverlay.ShowWithContent($"{position + 1}번째 자리가 어떤 숫자인지 물어볼까요?", slot =>
+                {
+                    PopupParts.AbilityHeading(slot, HeroId.Priest);
+                    CardChoice.Build(slot, faces, known, null, PopupParts.SmallCard, 5, digit =>
+                    {
+                        chosen = digit;
+                        if (buttons != null) buttons[1].interactable = true;
+                        status.text = $"{position + 1}번째 자리가 [{digit}]인지 묻습니다.";
+                        status.color = UITheme.Ink;
+                    });
+                    status = PopupParts.Status(slot, "물어볼 숫자를 고르세요. 상대는 거짓말할 수 없습니다.");
+                },
+                ("뒤로", UITheme.Accent, () => StartCoroutine(NextFrame(ShowPriestPositionPicker))),
+                ("물어보기", UITheme.StrikeFg, () => StartCoroutine(NextFrame(() => OnPriestQuerySubmitted(position, chosen)))));
+            buttons[1].interactable = false;
+        }
+
+        // Result of my own Priest question, as the asked card + a big "맞습니다 / 아닙니다".
+        private void ShowPriestAnswer(int position, int digit, bool answer, Action onOk)
+        {
+            _choiceOverlay.ShowWithContent("상대의 답변", slot =>
+                {
+                    PopupParts.AbilityHeading(slot, HeroId.Priest);
+                    PopupParts.Cards(slot, new[] { CardArt.Digit(digit) }, new[] { $"{position + 1}번째 자리" }, PopupParts.MediumCard);
+                    PopupParts.Verdict(slot, answer ? "맞습니다" : "아닙니다", answer);
+                },
+                ("확인", UITheme.Accent, onOk));
         }
 
         private void OnPriestQuerySubmitted(int position, int guessedDigit)
@@ -1680,6 +1737,7 @@ namespace LiarsBatting.Presentation
             _attackPicker.SetInteractable(false);
             _attackPicker.ResetAll();
 
+            _lastPriestQuery = (position, guessedDigit);
             if (_isOnlineMatch)
             {
                 _headerText.text = $"{_network.OpponentNickname}님의 답변을 기다리는 중...";
@@ -1689,9 +1747,7 @@ namespace LiarsBatting.Presentation
             {
                 bool answer = _state.AiSecret[position] == guessedDigit;
                 if (answer) _stats.PriestYes++;
-                string answerText = answer ? "맞습니다" : "아닙니다";
-                _choiceOverlay.Show($"상대의 답변: {position + 1}번째 자리가 {guessedDigit}인지에 대해 \"{answerText}\"",
-                    ("확인", EndMyAttackTurnAndPassToOpponent));
+                ShowPriestAnswer(position, guessedDigit, answer, EndMyAttackTurnAndPassToOpponent);
             }
         }
 
@@ -1701,9 +1757,16 @@ namespace LiarsBatting.Presentation
         private void PromptPriestDefenseChoice(int position, int guessedDigit, Action<bool> onAnswered)
         {
             bool trueAnswer = _state.PlayerSecret[position] == guessedDigit;
-            string truthLabel = trueAnswer ? "예" : "아니오";
-            string message = $"상대가 묻습니다: {position + 1}번째 자리가 {guessedDigit}인가요?\n진짜 답: {truthLabel}";
-            _choiceOverlay.Show(message, ("확인", () => onAnswered(trueAnswer)));
+            _choiceOverlay.ShowWithContent($"상대가 묻습니다: {position + 1}번째 자리가 {guessedDigit}인가요?", slot =>
+                {
+                    PopupParts.AbilityHeading(slot, HeroId.Priest);
+                    PopupParts.Cards(slot,
+                        new[] { CardArt.Digit(_state.PlayerSecret[position]), CardArt.Digit(guessedDigit) },
+                        new[] { $"내 {position + 1}번째 카드", "상대가 물은 숫자" }, PopupParts.MediumCard);
+                    PopupParts.Verdict(slot, trueAnswer ? "맞습니다" : "아닙니다", trueAnswer);
+                    PopupParts.Status(slot, "한 자리 심문에는 거짓말할 수 없습니다.");
+                },
+                ("그대로 답하기", UITheme.Accent, () => onAnswered(trueAnswer)));
         }
 
         private void BuildGameOverScreen(Transform root)
@@ -2742,8 +2805,14 @@ namespace LiarsBatting.Presentation
                 // The truth check is certain, so the log can record the verdict right away.
                 if (wasLie) _statusPanel.MyAttackHistory.MarkLastRowAsLie();
                 else _statusPanel.MyAttackHistory.MarkLastRowAsTruth();
-                string resultMessage = wasLie ? "진실 간파 결과: 거짓말이었습니다!" : "진실 간파 결과: 진실이었습니다!";
-                _choiceOverlay.Show(resultMessage, ("확인", wasLie ? (Action)ResolveChallenge : ResolveTrust));
+                _choiceOverlay.ShowWithContent("상대가 알려준 결과는", slot =>
+                    {
+                        PopupParts.AbilityHeading(slot, HeroId.Rogue);
+                        ResultLamps.Build(slot, reported, 36f);
+                        PopupParts.Verdict(slot, wasLie ? "거짓" : "진실", !wasLie);
+                        PopupParts.Status(slot, wasLie ? "자동으로 의심합니다." : "자동으로 믿습니다.");
+                    },
+                    ("확인", UITheme.Accent, wasLie ? (Action)ResolveChallenge : ResolveTrust));
             }
 
             System.Collections.IEnumerator ShowRogueResultNextFrame(bool wasLie)
