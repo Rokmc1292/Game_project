@@ -486,6 +486,9 @@ namespace LiarsBatting.Editor
             HeardVoices.Clear();
             Call(game, "OnHeroChosen", HeroId.Warrior);
             Call(game, "ShowSetupScreen"); // duplicate ShowSetupScreen call must not double-queue DemonHunter
+            string setupDesc = Get<UnityEngine.UI.Text>(game, "_setupDescription").text;
+            Check(setupDesc.Contains("구제외") && !setupDesc.Contains("데몬헌터"),
+                "Setup screen did not display '구제외' when opponent picked DemonHunter: " + setupDesc);
             yield return new WaitForSecondsRealtime(0.25f);
             Check(HeardVoices.SequenceEqual(new[] { "VO_Warrior_Select_01" }),
                 "DemonHunter setup voice cut off hero Select voice too early.");

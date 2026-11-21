@@ -1662,7 +1662,7 @@ namespace LiarsBatting.Presentation
                 : "비밀번호 준비";
             // The header bar is hidden, so the DemonHunter restriction is spelled out on the screen itself.
             _setupDescription.text = opponentIsDemonHunter
-                ? "상대가 데몬헌터라서 이번 판에는 9를 쓸 수 없습니다."
+                ? "상대가 구제외라서 이번 판에는 9를 쓸 수 없습니다."
                 : SetupDescription;
             _setupDescription.color = opponentIsDemonHunter ? UITheme.Clay : UITheme.Muted;
             _tokenText.text = "";
