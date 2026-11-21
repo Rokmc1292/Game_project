@@ -39,6 +39,7 @@ namespace LiarsBatting.Presentation
         public readonly RectTransform Root;
 
         private readonly MonoBehaviour _host;
+        private readonly Func<HeroId?> _heroProvider;
         private readonly Image _dim;
         private readonly RectTransform _panel;
         private readonly CanvasGroup _panelGroup;
@@ -61,15 +62,18 @@ namespace LiarsBatting.Presentation
         private readonly List<string> _progressSounds = new List<string>();
         private bool _introComplete;
         private bool _settlementReceived;
+        private bool _resultVoiceActive;
         private int[] _displayDigits;
 
         public bool IsVisible => Root.gameObject.activeInHierarchy;
         public bool IntroComplete => _introComplete;
 
         // onRematch: the 리매치 button, only shown on a draw (see ShowDraw).
-        public ResultPopupView(Transform parent, MonoBehaviour host, Action onMainMenu, Action onRematch = null)
+        public ResultPopupView(Transform parent, MonoBehaviour host, Action onMainMenu, Action onRematch = null,
+            Func<HeroId?> heroProvider = null)
         {
             _host = host;
+            _heroProvider = heroProvider;
             _winTitle = Resources.Load<Sprite>("Result/result_title_win");
             _loseTitle = Resources.Load<Sprite>("Result/result_title_lose");
 
@@ -201,6 +205,11 @@ namespace LiarsBatting.Presentation
             _progressRoutine = null;
             _progressSounds.Clear();
             GameAudio.StopProgressEffects();
+            if (_resultVoiceActive)
+            {
+                _resultVoiceActive = false;
+                GameAudio.StopVoice();
+            }
             Root.gameObject.SetActive(false);
         }
 
@@ -257,6 +266,7 @@ namespace LiarsBatting.Presentation
         private void Present(Outcome outcome, bool online, string message, int[] digits, bool waitForDigits)
         {
             Hide();
+            _resultVoiceActive = true;
             _introComplete = false;
             _settlementReceived = false;
             bool draw = outcome == Outcome.Draw;
@@ -320,6 +330,12 @@ namespace LiarsBatting.Presentation
                     stampPlayed = true;
                     GameAudio.Play(outcome == Outcome.Draw ? "SFX_Result_Stamp_Draw" :
                         outcome == Outcome.Win ? "SFX_Result_Stamp_Win" : "SFX_Result_Stamp_Lose");
+                    if (_heroProvider != null)
+                    {
+                        var voiceCue = outcome == Outcome.Draw ? VoiceCue.Draw :
+                            outcome == Outcome.Win ? VoiceCue.Win : VoiceCue.Lose;
+                        GameAudio.PlayVoice(_heroProvider(), voiceCue, 0.22f);
+                    }
                 }
                 if (hasDigits && _displayDigits != null && nextCardSound < 4 && t >= cardsAt + nextCardSound * CardStep)
                 {

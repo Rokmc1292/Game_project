@@ -31,17 +31,42 @@ namespace LiarsBatting.Editor
         private void OnPreprocessAudio()
         {
             if (!assetPath.StartsWith(AudioFolder + "/", StringComparison.Ordinal)) return;
-            var importer = (AudioImporter)assetImporter;
-            bool longMusic = assetPath.Contains("/BGM/") && !assetPath.Contains("_Stinger");
+            ApplyAudioSettings((AudioImporter)assetImporter, assetPath);
+        }
+
+        private static bool ApplyAudioSettings(AudioImporter importer, string path)
+        {
+            bool longMusic = path.Contains("/BGM/") && !path.Contains("_Stinger");
+            bool voice = path.Contains("/VO/");
+            var targetLoadType = longMusic ? AudioClipLoadType.Streaming
+                : voice ? AudioClipLoadType.CompressedInMemory
+                : AudioClipLoadType.DecompressOnLoad;
+            var targetCompression = (longMusic || voice)
+                ? AudioCompressionFormat.Vorbis
+                : AudioCompressionFormat.PCM;
+            bool targetPreload = !longMusic;
+            bool targetBackground = longMusic;
+
             var settings = importer.defaultSampleSettings;
-            settings.loadType = longMusic ? AudioClipLoadType.Streaming : AudioClipLoadType.DecompressOnLoad;
-            settings.compressionFormat = longMusic ? AudioCompressionFormat.Vorbis : AudioCompressionFormat.PCM;
+            bool changed = settings.loadType != targetLoadType ||
+                settings.compressionFormat != targetCompression ||
+                settings.sampleRateSetting != AudioSampleRateSetting.PreserveSampleRate ||
+                !Mathf.Approximately(settings.quality, 0.85f) ||
+                settings.preloadAudioData != targetPreload ||
+                importer.loadInBackground != targetBackground ||
+                importer.forceToMono;
+
+            if (!changed) return false;
+
+            settings.loadType = targetLoadType;
+            settings.compressionFormat = targetCompression;
             settings.sampleRateSetting = AudioSampleRateSetting.PreserveSampleRate;
             settings.quality = 0.85f;
-            settings.preloadAudioData = !longMusic;
+            settings.preloadAudioData = targetPreload;
             importer.defaultSampleSettings = settings;
-            importer.loadInBackground = longMusic;
+            importer.loadInBackground = targetBackground;
             importer.forceToMono = false;
+            return true;
         }
 
         public static void RebuildCatalog()
@@ -78,9 +103,17 @@ namespace LiarsBatting.Editor
         private static void Sync()
         {
             if (!AssetDatabase.IsValidFolder(AudioFolder)) return;
-            var clips = AssetDatabase.FindAssets("t:AudioClip", new[] { AudioFolder })
+            var paths = AssetDatabase.FindAssets("t:AudioClip", new[] { AudioFolder })
                 .Select(AssetDatabase.GUIDToAssetPath)
                 .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+            foreach (string path in paths)
+            {
+                if (AssetImporter.GetAtPath(path) is AudioImporter importer && ApplyAudioSettings(importer, path))
+                    importer.SaveAndReimport();
+            }
+
+            var clips = paths
                 .Select(AssetDatabase.LoadAssetAtPath<AudioClip>)
                 .Where(clip => clip != null)
                 .ToArray();

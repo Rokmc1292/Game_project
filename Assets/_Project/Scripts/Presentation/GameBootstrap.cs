@@ -146,9 +146,12 @@ namespace LiarsBatting.Presentation
         private RulebookView _rulebook;
         private Slider _musicSlider;
         private Slider _effectsSlider;
+        private Slider _voiceSlider;
         private Toggle _musicMute;
         private Toggle _effectsMute;
+        private Toggle _voiceMute;
         private bool _sealAnnounced;
+        private bool _demonHunterVoiceAnnounced;
         private bool _firstTurnAnnounced;
         private bool _heroChosen;
         private bool _secretChosen;
@@ -488,7 +491,7 @@ namespace LiarsBatting.Presentation
             var centered = UiFactory.HorizontalGroup(backdrop, "SettingsCenter", childAlign: TextAnchor.MiddleCenter);
             centered.anchorMin = new Vector2(0.04f, 0.5f);
             centered.anchorMax = new Vector2(0.96f, 0.5f);
-            centered.sizeDelta = new Vector2(0f, 340f);
+            centered.sizeDelta = new Vector2(0f, 420f);
             centered.anchoredPosition = Vector2.zero;
 
             var panel = UiFactory.Panel(centered, "SettingsPanel", UITheme.Surface2);
@@ -511,6 +514,8 @@ namespace LiarsBatting.Presentation
                 GameAudio.SetMusicMuted, out _musicSlider, out _musicMute);
             BuildSoundRow(content, "효과음", "Effects", GameAudio.SetEffectsLevel,
                 GameAudio.SetEffectsMuted, out _effectsSlider, out _effectsMute);
+            BuildSoundRow(content, "음성", "Voice", GameAudio.SetVoiceLevel,
+                GameAudio.SetVoiceMuted, out _voiceSlider, out _voiceMute);
 
             var closeRow = UiFactory.HorizontalGroup(content, "CloseRow", spacing: 0, childAlign: TextAnchor.MiddleCenter);
             UiFactory.SetHeight(closeRow, 50);
@@ -617,8 +622,10 @@ namespace LiarsBatting.Presentation
         {
             _musicSlider.value = GameAudio.MusicLevel;
             _effectsSlider.value = GameAudio.EffectsLevel;
+            _voiceSlider.value = GameAudio.VoiceLevel;
             _musicMute.isOn = GameAudio.MusicMuted;
             _effectsMute.isOn = GameAudio.EffectsMuted;
+            _voiceMute.isOn = GameAudio.VoiceMuted;
             _soundSettings.SetActive(true);
             _soundSettings.transform.SetAsLastSibling(); // above whichever screen is showing
         }
@@ -1010,6 +1017,7 @@ namespace LiarsBatting.Presentation
                 _timer.Stop();   // the opponent decided: its clock on my screen is done
                 bool wasLie = _network.DidIActuallyLie();
                 GameAudio.Play("SFX_Challenge_Doubt");
+                if (_state != null) GameAudio.PlayVoice(_state.AiHero, VoiceCue.Challenge, 0.05f);
                 GameAudio.Play(wasLie ? "SFX_Reveal_Punished" : "SFX_Reveal_Busted");
                 _network.ResolveChallenge(wasLie);
             };
@@ -1053,6 +1061,7 @@ namespace LiarsBatting.Presentation
             _network.OnOpponentRevealed += (side, index, digit) =>
             {
                 if (_matchOver || index < 0 || index > 3) return;
+                bool newlyRevealed = !_state.AiRevealed[index];
                 _state.AiSecret[index] = digit;
                 RevealDigit(_state.AiRevealed, index);
                 RefreshRevealedRows();
@@ -1072,6 +1081,9 @@ namespace LiarsBatting.Presentation
                     EndOnlineGame(true, "상대의 비밀번호가 모두 공개되었다");
                     return;
                 }
+
+                if (newlyRevealed && _state != null)
+                    GameAudio.PlayVoice(_state.PlayerHero, iChallenged ? VoiceCue.CatchLie : VoiceCue.DefendTruth, 0.15f);
 
                 // The turn change arrives in the same poll; the banner is shown ahead of it.
                 QueueNotice(iChallenged
@@ -1251,6 +1263,7 @@ namespace LiarsBatting.Presentation
                 int idx = PickRandomOpenIndex(_state.PlayerRevealed);
                 if (idx < 0) return;
                 GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
+                GameAudio.PlayVoice(HeroId.Wizard, VoiceCue.Ability, 0.12f);
                 RevealDigit(_state.PlayerRevealed, idx);
                 RefreshRevealedRows();
                 // Their ability just opened my last hidden digit: my whole secret is out. Reply and ending go
@@ -1298,7 +1311,11 @@ namespace LiarsBatting.Presentation
         private void BeginOnlineAttackTurnAfterAnnouncement()
         {
             _stats.OnExtraTurn = _nextOnlineTurnExtra;
-            if (_nextOnlineTurnExtra) GameAudio.Play("SFX_Warrior_ExtraTurn");
+            if (_nextOnlineTurnExtra)
+            {
+                GameAudio.Play("SFX_Warrior_ExtraTurn");
+                GameAudio.PlayVoice(HeroId.Warrior, VoiceCue.Ability, 0.10f);
+            }
             _nextOnlineTurnExtra = false;
             RefreshTokenHeader();
             _headerText.text = $"내 턴 — {_network.OpponentNickname}님의 비밀번호를 추리하세요";
@@ -1331,6 +1348,7 @@ namespace LiarsBatting.Presentation
             if (!_opponentExtraTurnPending) return;
             _opponentExtraTurnPending = false;
             GameAudio.Play("SFX_Warrior_ExtraTurn");
+            GameAudio.PlayVoice(HeroId.Warrior, VoiceCue.Ability, 0.10f);
         }
 
         private void BeginOnlineWaitTurnAfterAnnouncement()
@@ -1540,6 +1558,7 @@ namespace LiarsBatting.Presentation
             _heroChosen = true;
             _timer.Stop();
             GameAudio.Play("SFX_Hero_Select_Confirm");
+            GameAudio.PlayVoice(hero, VoiceCue.Select, 0.08f);
             SetHeroButtonsInteractable(false);
 
             _state.PlayerHero = hero;
@@ -1630,6 +1649,11 @@ namespace LiarsBatting.Presentation
                 _sealAnnounced = true;
                 GameAudio.Play("SFX_Hero_DemonHunter_Seal");
             }
+            if ((opponentIsDemonHunter || _state.PlayerHero == HeroId.DemonHunter) && !_demonHunterVoiceAnnounced)
+            {
+                _demonHunterVoiceAnnounced = true;
+                GameAudio.PlayVoice(HeroId.DemonHunter, VoiceCue.Ability, 0.15f);
+            }
             _setupPicker.SetInteractable(true);
             _setupPicker.SetDigitEnabled(9, !opponentIsDemonHunter);
 
@@ -1717,6 +1741,7 @@ namespace LiarsBatting.Presentation
             // disabled then too -- see RefreshMyAbilityUI).
             if (_state.PlayerLieTokens >= GameState.MaxLieTokens) return;
             GameAudio.Play("SFX_Hero_Paladin_Restore");
+            GameAudio.PlayVoice(HeroId.Paladin, VoiceCue.Ability, 0.10f);
             _stats.AbilityUses++;
             _stats.PaladinHealed = true;
             _state.PlayerAbilityCharges--;
@@ -1745,6 +1770,7 @@ namespace LiarsBatting.Presentation
             if (HiddenCount(_state.PlayerRevealed) <= 1) return;
             if (!_myTurnActive) return;   // own attack turn only (the button is disabled otherwise)
             GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
+            GameAudio.PlayVoice(HeroId.Wizard, VoiceCue.Ability, 0.12f);
             _stats.AbilityUses++;
             _stats.GuessesAtWizard = _stats.Guesses;
             _state.PlayerAbilityCharges--;
@@ -1951,6 +1977,7 @@ namespace LiarsBatting.Presentation
         private void OnPriestQuerySubmitted(int position, int guessedDigit)
         {
             GameAudio.Play("SFX_Hero_Priest_Inquiry");
+            GameAudio.PlayVoice(HeroId.Priest, VoiceCue.Ability, 0.10f);
             _stats.AbilityUses++;
             _timer.Stop();
             _state.PlayerAbilityCharges--;
@@ -1979,6 +2006,7 @@ namespace LiarsBatting.Presentation
         private void PromptPriestDefenseChoice(int position, int guessedDigit, Action<bool> onAnswered)
         {
             GameAudio.Play("SFX_Hero_Priest_Inquiry");
+            GameAudio.PlayVoice(HeroId.Priest, VoiceCue.Ability, 0.10f);
             bool trueAnswer = _state.PlayerSecret[position] == guessedDigit;
             void Respond()
             {
@@ -2018,7 +2046,7 @@ namespace LiarsBatting.Presentation
                 _isOnlineMatch = false;
                 _resultPopup.Hide();
                 ShowMainMenu();
-            }, OnRematchClicked);
+            }, OnRematchClicked, () => _state != null ? (HeroId?)_state.PlayerHero : null);
             _gameOverScreen = _resultPopup.Root.gameObject;
             _gameOverScreen.SetActive(false);
         }
@@ -2109,6 +2137,7 @@ namespace LiarsBatting.Presentation
 
         private void ShowMainMenu()
         {
+            GameAudio.StopVoice();
             GameAudio.LobbyMusic();
             _timer.Stop();
             ShowOnly(_mainMenuScreen);
@@ -2298,6 +2327,7 @@ namespace LiarsBatting.Presentation
             _matchSession++;
             _responseAudioStep++;
             _sealAnnounced = false;
+            _demonHunterVoiceAnnounced = false;
             _firstTurnAnnounced = false;
             _heroChosen = false;
             _secretChosen = false;
@@ -2417,6 +2447,7 @@ namespace LiarsBatting.Presentation
             {
                 _firstTurnAnnounced = true;
                 GameAudio.Play("SFX_Match_Start");
+                if (_state != null) GameAudio.PlayVoice(_state.PlayerHero, VoiceCue.MatchStart, 0.25f);
             }
             string headline = iAmFirst ? "선공" : "후공";
             string detail = iAmFirst ? "내가 먼저 상대의 비밀번호를 추리합니다" : "상대가 먼저 나의 비밀번호를 추리합니다";
@@ -2596,6 +2627,7 @@ namespace LiarsBatting.Presentation
                 _state.PlayerExtraTurnPending = false;
                 _stats.OnExtraTurn = true;   // this next attack is the Warrior's kept turn
                 GameAudio.Play("SFX_Warrior_ExtraTurn");
+                GameAudio.PlayVoice(HeroId.Warrior, VoiceCue.Ability, 0.10f);
                 BeginPlayerAttackTurn(false);
             }
             else
@@ -2610,6 +2642,7 @@ namespace LiarsBatting.Presentation
             {
                 _state.AiAbilityCharges--;
                 GameAudio.Play("SFX_Warrior_ExtraTurn");
+                GameAudio.PlayVoice(HeroId.Warrior, VoiceCue.Ability, 0.10f);
                 BeginAiAttackTurn(false);
             }
             else
@@ -2625,6 +2658,7 @@ namespace LiarsBatting.Presentation
         private void AiUseWizard()
         {
             GameAudio.Play("SFX_Hero_Wizard_Clairvoyance");
+            GameAudio.PlayVoice(HeroId.Wizard, VoiceCue.Ability, 0.12f);
             _state.AiAbilityCharges--;
             int aiIdx = _ai.PickOwnRevealIndex(_state.AiRevealed);
             if (aiIdx >= 0) RevealDigit(_state.AiRevealed, aiIdx);
@@ -2779,6 +2813,7 @@ namespace LiarsBatting.Presentation
         private void BeginPlayerLastGuess()
         {
             GameAudio.BeginFinalChance();
+            if (_state != null) GameAudio.PlayVoice(_state.PlayerHero, VoiceCue.FinalChance, 0.30f);
             _lastGuessTurn = true;
             _timer.Stop();
             _attackPicker.SetInteractable(false);
@@ -2939,6 +2974,7 @@ namespace LiarsBatting.Presentation
                     return;
                 }
 
+                GameAudio.PlayVoice(_state.AiHero, VoiceCue.Challenge, 0.05f);
                 if (playerLied)
                 {
                     _stats.LiesCaught++;
@@ -2992,6 +3028,11 @@ namespace LiarsBatting.Presentation
 
             RevealDigit(_state.AiRevealed, idx);
             RefreshRevealedRows();
+            if (_state != null)
+            {
+                var cue = headline == "적중!" ? VoiceCue.CatchLie : VoiceCue.DefendTruth;
+                GameAudio.PlayVoice(_state.PlayerHero, cue, 0.15f);
+            }
             string text = RevealNoticeText(headline, detail, idx);
             ShowBanner(text, RevealNoticeHoldSeconds, () =>
             {
@@ -3014,6 +3055,8 @@ namespace LiarsBatting.Presentation
                 _choiceOverlay.Show($"{message} (이미 모든 자리가 공개됨)", ("확인", () => onRevealed(-1)));
                 return;
             }
+
+            if (_state != null) GameAudio.PlayVoice(_state.PlayerHero, VoiceCue.Punished, 0.12f);
 
             // My four cards in their real positions: pick a hidden one, then confirm. Already-public
             // cards stay visible (dimmed) so it's clear which positions the opponent knows.
@@ -3099,6 +3142,13 @@ namespace LiarsBatting.Presentation
                 if (usedToken && trueResult.IsWin) _stats.HidTrueWin = true;   // Hunter: hid a real 4-strike
                 _timer.Stop();
                 GameAudio.Play(usedToken ? "SFX_LieToken_Spend" : "SFX_Truth_Declare");
+                if (usedToken && _state != null)
+                {
+                    if (trueResult.IsWin)
+                        GameAudio.PlayVoice(HeroId.Hunter, VoiceCue.Ability, 0.08f);
+                    else
+                        GameAudio.PlayVoice(_state.PlayerHero, VoiceCue.Bluff, 0.08f);
+                }
                 onChoice(result, usedToken);
             }
 
@@ -3213,6 +3263,7 @@ namespace LiarsBatting.Presentation
                 CancelResponseAudio();
                 _timer.Stop();
                 GameAudio.Play("SFX_Challenge_Doubt");
+                if (_state != null) GameAudio.PlayVoice(_state.PlayerHero, VoiceCue.Challenge, 0.05f);
                 onChallenge();
             }
 
@@ -3236,6 +3287,7 @@ namespace LiarsBatting.Presentation
                     CancelResponseAudio();
                     _timer.Stop();
                     GameAudio.Play("SFX_Hero_Rogue_Insight");
+                    GameAudio.PlayVoice(HeroId.Rogue, VoiceCue.Ability, 0.10f);
                     _stats.AbilityUses++;
                     _state.PlayerAbilityCharges--;
                     RefreshMyAbilityUI();

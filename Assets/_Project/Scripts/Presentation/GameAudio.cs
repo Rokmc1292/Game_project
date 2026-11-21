@@ -1,5 +1,7 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using LiarsBatting.Core;
 using UnityEngine;
 
 namespace LiarsBatting.Presentation
@@ -8,11 +10,15 @@ namespace LiarsBatting.Presentation
     {
         private const float MusicVolume = 0.28f;
         private const float EffectsVolume = 0.65f;
+        private const float VoiceVolume = 0.85f;
+        private const float VoiceDuck = 0.45f;
         private const float DefaultVolume = 0.8f;
         private const string MusicVolumeKey = "lb_audio_music_volume";
         private const string EffectsVolumeKey = "lb_audio_effects_volume";
+        private const string VoiceVolumeKey = "lb_audio_voice_volume";
         private const string MusicMutedKey = "lb_audio_music_muted";
         private const string EffectsMutedKey = "lb_audio_effects_muted";
+        private const string VoiceMutedKey = "lb_audio_voice_muted";
         private const int EffectVoices = 12;
         private const float ClimaxHoldSeconds = 8f;
         private enum EffectCategory { Hover, UI, Timer, Gameplay, Hero, Result, Progress }
@@ -34,35 +40,62 @@ namespace LiarsBatting.Presentation
             }
         }
 
+        private readonly struct PendingVoice
+        {
+            public readonly AudioClip Clip;
+            public readonly VoiceCue Cue;
+            public readonly float Delay;
+
+            public PendingVoice(AudioClip clip, VoiceCue cue, float delay)
+            {
+                Clip = clip;
+                Cue = cue;
+                Delay = Mathf.Max(0f, delay);
+            }
+        }
+
         private static GameAudio _instance;
         private readonly Dictionary<string, AudioClip> _clips = new Dictionary<string, AudioClip>();
+        private readonly Dictionary<string, List<AudioClip>> _voiceGroups = new Dictionary<string, List<AudioClip>>();
+        private readonly Dictionary<string, int> _lastVoiceIndex = new Dictionary<string, int>();
         private readonly Dictionary<string, float> _lastPlayed = new Dictionary<string, float>();
         private readonly HashSet<string> _missingClips = new HashSet<string>();
         private AudioSource _music;
         private AudioSource[] _effects;
+        private AudioSource _voice;
         private readonly int[] _voicePriority = new int[EffectVoices];
         private readonly EffectCategory[] _voiceCategory = new EffectCategory[EffectVoices];
         private readonly long[] _voiceOrder = new long[EffectVoices];
         private readonly float[] _voiceGain = new float[EffectVoices];
         private readonly float[] _voiceDuck = new float[EffectVoices];
         private Coroutine _musicTransition;
+        private Coroutine _voiceRoutine;
+        private VoiceCue? _activeVoiceCue;
+        private PendingVoice? _queuedVoice;
         private string _musicName;
         private long _sequence;
         private float _musicGain;
         private float _duckGain = 1f;
+        private float _voiceDuckGain = 1f;
+        private float _currentVoiceGain;
         private MusicPhase _musicPhase;
         private float _climaxUntil;
         private float _musicVolume;
         private float _effectsVolume;
+        private float _voiceVolume;
         private bool _musicMuted;
         private bool _effectsMuted;
+        private bool _voiceMuted;
 
         public static float MusicLevel => _instance != null ? _instance._musicVolume : DefaultVolume;
         public static float EffectsLevel => _instance != null ? _instance._effectsVolume : DefaultVolume;
+        public static float VoiceLevel => _instance != null ? _instance._voiceVolume : DefaultVolume;
         public static bool MusicMuted => _instance != null && _instance._musicMuted;
         public static bool EffectsMuted => _instance != null && _instance._effectsMuted;
+        public static bool VoiceMuted => _instance != null && _instance._voiceMuted;
 #if UNITY_EDITOR
-        public static event System.Action<string> EditorEffectPlayed;
+        public static event Action<string> EditorEffectPlayed;
+        public static event Action<string> EditorVoicePlayed;
 #endif
 
         public static void Initialize()
@@ -93,23 +126,48 @@ namespace LiarsBatting.Presentation
         private void Setup()
         {
             if (_musicTransition != null) StopCoroutine(_musicTransition);
+            StopVoiceChannel();
             _lastPlayed.Clear();
             _musicVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(MusicVolumeKey, DefaultVolume));
             _effectsVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(EffectsVolumeKey, DefaultVolume));
+            _voiceVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(VoiceVolumeKey, DefaultVolume));
             _musicMuted = PlayerPrefs.GetInt(MusicMutedKey, 0) != 0;
             _effectsMuted = PlayerPrefs.GetInt(EffectsMutedKey, 0) != 0;
+            _voiceMuted = PlayerPrefs.GetInt(VoiceMutedKey, 0) != 0;
             _clips.Clear();
+            _voiceGroups.Clear();
+            _lastVoiceIndex.Clear();
             var catalog = Resources.Load<AudioCatalog>("AudioCatalog");
             if (catalog == null || catalog.Clips == null)
                 Debug.LogWarning("Audio catalog is missing. Open the project in Unity to generate it.");
             else
+            {
                 foreach (var clip in catalog.Clips)
-                    if (clip != null && !_clips.TryAdd(clip.name, clip))
+                {
+                    if (clip == null) continue;
+                    if (!_clips.TryAdd(clip.name, clip))
+                    {
                         Debug.LogError($"Duplicate audio clip name: {clip.name}");
+                        continue;
+                    }
+                    if (clip.name.StartsWith("VO_", StringComparison.Ordinal))
+                    {
+                        string groupKey = VoiceGroupKey(clip.name);
+                        if (!_voiceGroups.TryGetValue(groupKey, out var group))
+                        {
+                            group = new List<AudioClip>();
+                            _voiceGroups[groupKey] = group;
+                        }
+                        group.Add(clip);
+                    }
+                }
+                foreach (var group in _voiceGroups.Values)
+                    group.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            }
 
             if (FindAnyObjectByType<AudioListener>() == null) gameObject.AddComponent<AudioListener>();
             var sources = new List<AudioSource>(GetComponents<AudioSource>());
-            while (sources.Count < EffectVoices + 1) sources.Add(gameObject.AddComponent<AudioSource>());
+            while (sources.Count < EffectVoices + 2) sources.Add(gameObject.AddComponent<AudioSource>());
             _music = sources[0];
             _music.playOnAwake = false;
             _music.spatialBlend = 0f;
@@ -126,7 +184,20 @@ namespace LiarsBatting.Presentation
                 _effects[i].playOnAwake = false;
                 _effects[i].spatialBlend = 0f;
             }
+            _voice = sources[EffectVoices + 1];
+            _voice.playOnAwake = false;
+            _voice.spatialBlend = 0f;
+            _voice.loop = false;
             ApplyVolumes();
+        }
+
+        private static string VoiceGroupKey(string clipName)
+        {
+            int lastUnderscore = clipName.LastIndexOf('_');
+            if (lastUnderscore <= 3 || lastUnderscore >= clipName.Length - 1) return clipName;
+            for (int i = lastUnderscore + 1; i < clipName.Length; i++)
+                if (clipName[i] < '0' || clipName[i] > '9') return clipName;
+            return clipName.Substring(0, lastUnderscore);
         }
 
         private void Update()
@@ -138,6 +209,11 @@ namespace LiarsBatting.Presentation
                     duckTarget = Mathf.Min(duckTarget, _voiceDuck[i]);
             _duckGain = Mathf.MoveTowards(_duckGain, duckTarget,
                 Time.unscaledDeltaTime * (duckTarget < _duckGain ? 8f : 3f));
+
+            float voiceDuckTarget = _voice != null && _voice.isPlaying && _currentVoiceGain > 0f ? VoiceDuck : 1f;
+            _voiceDuckGain = Mathf.MoveTowards(_voiceDuckGain, voiceDuckTarget,
+                Time.unscaledDeltaTime * (voiceDuckTarget < _voiceDuckGain ? 10f : 3.5f));
+
             if (_musicPhase == MusicPhase.Match && _climaxUntil > 0f && Time.unscaledTime >= _climaxUntil)
             {
                 _climaxUntil = 0f;
@@ -167,6 +243,15 @@ namespace LiarsBatting.Presentation
             _instance.ApplyVolumes();
         }
 
+        public static void SetVoiceLevel(float value)
+        {
+            if (_instance == null) return;
+            _instance._voiceVolume = Mathf.Clamp01(value);
+            PlayerPrefs.SetFloat(VoiceVolumeKey, _instance._voiceVolume);
+            _instance.ApplyVoiceVolume();
+            _instance.ApplyMusicVolume();
+        }
+
         public static void SetMusicMuted(bool muted)
         {
             if (_instance == null) return;
@@ -183,6 +268,15 @@ namespace LiarsBatting.Presentation
             _instance.ApplyVolumes();
         }
 
+        public static void SetVoiceMuted(bool muted)
+        {
+            if (_instance == null) return;
+            _instance._voiceMuted = muted;
+            PlayerPrefs.SetInt(VoiceMutedKey, muted ? 1 : 0);
+            _instance.ApplyVoiceVolume();
+            _instance.ApplyMusicVolume();
+        }
+
         public static void SaveSettings() => PlayerPrefs.Save();
 
         private void OnApplicationPause(bool paused)
@@ -194,15 +288,160 @@ namespace LiarsBatting.Presentation
 
         private void ApplyMusicVolume()
         {
-            float duck = _effectsMuted || _effectsVolume <= 0f ? 1f : _duckGain;
-            _music.volume = _musicMuted ? 0f : _musicGain * duck * _musicVolume;
+            if (_music == null) return;
+            float effectDuck = _effectsMuted || _effectsVolume <= 0f ? 1f : _duckGain;
+            float voiceDuck = _voiceMuted || _voiceVolume <= 0f ? 1f : _voiceDuckGain;
+            _music.volume = _musicMuted ? 0f : _musicGain * Mathf.Min(effectDuck, voiceDuck) * _musicVolume;
+        }
+
+        private void ApplyVoiceVolume()
+        {
+            if (_voice == null) return;
+            _voice.volume = _voiceMuted ? 0f : _currentVoiceGain * _voiceVolume;
         }
 
         private void ApplyVolumes()
         {
             ApplyMusicVolume();
-            for (int i = 0; i < _effects.Length; i++)
-                _effects[i].volume = _effectsMuted ? 0f : _voiceGain[i] * _effectsVolume;
+            if (_effects != null)
+            {
+                for (int i = 0; i < _effects.Length; i++)
+                    _effects[i].volume = _effectsMuted ? 0f : _voiceGain[i] * _effectsVolume;
+            }
+            ApplyVoiceVolume();
+        }
+
+        public static void PlayVoice(HeroId? hero, VoiceCue cue, float delay = 0f)
+        {
+            if (hero.HasValue) PlayVoice(hero.Value, cue, delay);
+        }
+
+        public static void PlayVoice(HeroId hero, VoiceCue cue, float delay = 0f)
+        {
+            var audio = _instance;
+            if (audio == null || !audio.isActiveAndEnabled || audio._voice == null) return;
+            if (!audio.TryPickVoiceClip(hero, cue, out var clip)) return;
+
+            var pending = new PendingVoice(clip, cue, delay);
+            bool activeNow = audio._voiceRoutine != null || audio._voice.isPlaying;
+            if (activeNow && audio._activeVoiceCue.HasValue &&
+                ShouldQueueBehind(audio._activeVoiceCue.Value, cue))
+            {
+                audio._queuedVoice = pending;
+                return;
+            }
+
+            audio.StopVoiceChannel();
+            audio._activeVoiceCue = cue;
+            audio._voiceRoutine = audio.StartCoroutine(audio.RunVoiceRoutine(pending));
+        }
+
+        private static bool ShouldQueueBehind(VoiceCue active, VoiceCue incoming)
+        {
+            if (active == VoiceCue.Select && incoming == VoiceCue.Ability)
+                return true;
+            if (active == VoiceCue.Challenge &&
+                (incoming == VoiceCue.CatchLie || incoming == VoiceCue.DefendTruth || incoming == VoiceCue.Punished))
+                return true;
+            return false;
+        }
+
+        private bool TryPickVoiceClip(HeroId hero, VoiceCue cue, out AudioClip clip)
+        {
+            clip = null;
+            string groupKey = $"VO_{hero}_{cue}";
+            if (!_voiceGroups.TryGetValue(groupKey, out var group) || group == null || group.Count == 0)
+                return false;
+
+            if (group.Count == 1)
+            {
+                clip = group[0];
+                return clip != null;
+            }
+
+            int last = _lastVoiceIndex.TryGetValue(groupKey, out int prev) ? prev : -1;
+            int idx = UnityEngine.Random.Range(0, group.Count);
+            if (idx == last) idx = (idx + 1) % group.Count;
+            _lastVoiceIndex[groupKey] = idx;
+            clip = group[idx];
+            return clip != null;
+        }
+
+        private IEnumerator RunVoiceRoutine(PendingVoice current)
+        {
+            while (true)
+            {
+                _activeVoiceCue = current.Cue;
+                if (current.Delay > 0f)
+                {
+                    float elapsed = 0f;
+                    while (elapsed < current.Delay)
+                    {
+                        elapsed += Time.unscaledDeltaTime;
+                        yield return null;
+                    }
+                }
+
+                if (_voice == null || current.Clip == null) break;
+                _voice.Stop();
+                _voice.clip = current.Clip;
+                _voice.pitch = 1f;
+                _currentVoiceGain = VoiceVolume;
+                ApplyVoiceVolume();
+                _voice.Play();
+#if UNITY_EDITOR
+                EditorVoicePlayed?.Invoke(current.Clip.name);
+#endif
+
+                float maxDuration = current.Clip.length + 0.5f;
+                float played = 0f;
+                while (_voice != null && _voice.isPlaying && played < maxDuration)
+                {
+                    played += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+
+                _currentVoiceGain = 0f;
+                if (_voice != null) _voice.clip = null;
+
+                if (_queuedVoice.HasValue)
+                {
+                    var next = _queuedVoice.Value;
+                    _queuedVoice = null;
+                    current = new PendingVoice(next.Clip, next.Cue, 0.08f);
+                    continue;
+                }
+
+                break;
+            }
+
+            _activeVoiceCue = null;
+            _voiceRoutine = null;
+        }
+
+        public static void StopVoice()
+        {
+            if (_instance == null) return;
+            _instance.StopVoiceChannel();
+            _instance.ApplyMusicVolume();
+        }
+
+        private void StopVoiceChannel()
+        {
+            if (_voiceRoutine != null)
+            {
+                StopCoroutine(_voiceRoutine);
+                _voiceRoutine = null;
+            }
+            _queuedVoice = null;
+            _activeVoiceCue = null;
+            _currentVoiceGain = 0f;
+            _voiceDuckGain = 1f;
+            if (_voice != null)
+            {
+                _voice.Stop();
+                _voice.clip = null;
+            }
         }
 
         public static void Play(string name, float pitch = 1f, float volume = 1f)
@@ -277,14 +516,15 @@ namespace LiarsBatting.Presentation
             if (_instance == null) return;
             for (int i = 0; i < _instance._effects.Length; i++)
                 if (_instance._effects[i].clip != null && _instance._effects[i].clip.name == name)
-                    _instance.StopVoice(i);
+                    _instance.StopEffectVoice(i);
         }
 
         public static void StopEffects()
         {
             if (_instance == null) return;
-            for (int i = 0; i < _instance._effects.Length; i++) _instance.StopVoice(i);
+            for (int i = 0; i < _instance._effects.Length; i++) _instance.StopEffectVoice(i);
             _instance._duckGain = 1f;
+            _instance.StopVoiceChannel();
             _instance.ApplyMusicVolume();
         }
 
@@ -292,10 +532,10 @@ namespace LiarsBatting.Presentation
         {
             if (_instance == null) return;
             for (int i = 0; i < _instance._effects.Length; i++)
-                if (_instance._voiceCategory[i] == EffectCategory.Progress) _instance.StopVoice(i);
+                if (_instance._voiceCategory[i] == EffectCategory.Progress) _instance.StopEffectVoice(i);
         }
 
-        private void StopVoice(int index)
+        private void StopEffectVoice(int index)
         {
             _effects[index].Stop();
             _effects[index].clip = null;
@@ -491,5 +731,4 @@ namespace LiarsBatting.Presentation
             _musicTransition = null;
         }
     }
-
 }

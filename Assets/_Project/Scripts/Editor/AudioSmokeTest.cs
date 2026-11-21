@@ -118,18 +118,30 @@ namespace LiarsBatting.Editor
                                 .First(slider => slider.name == "MusicSlider");
                             var effectsSlider = dialog.GetComponentsInChildren<Slider>()
                                 .First(slider => slider.name == "EffectsSlider");
+                            var voiceSlider = dialog.GetComponentsInChildren<Slider>()
+                                .First(slider => slider.name == "VoiceSlider");
                             var musicToggle = dialog.GetComponentsInChildren<Toggle>()
                                 .First(toggle => toggle.name == "MusicMute");
                             var effectsToggle = dialog.GetComponentsInChildren<Toggle>()
                                 .First(toggle => toggle.name == "EffectsMute");
+                            var voiceToggle = dialog.GetComponentsInChildren<Toggle>()
+                                .First(toggle => toggle.name == "VoiceMute");
+                            var closeBtn = dialog.GetComponentsInChildren<Button>()
+                                .First(button => button.name == "CloseSoundSettingsButton");
                             Require(ReceivesPointer<IPointerDownHandler>(musicSlider.gameObject),
                                 "Music slider cannot receive pointer input.");
                             Require(ReceivesPointer<IPointerDownHandler>(effectsSlider.gameObject),
                                 "Effects slider cannot receive pointer input.");
+                            Require(ReceivesPointer<IPointerDownHandler>(voiceSlider.gameObject),
+                                "Voice slider cannot receive pointer input.");
                             Require(ReceivesPointer<IPointerClickHandler>(musicToggle.gameObject),
                                 "Music mute cannot receive pointer input.");
                             Require(ReceivesPointer<IPointerClickHandler>(effectsToggle.gameObject),
                                 "Effects mute cannot receive pointer input.");
+                            Require(ReceivesPointer<IPointerClickHandler>(voiceToggle.gameObject),
+                                "Voice mute cannot receive pointer input.");
+                            Require(ReceivesPointer<IPointerClickHandler>(closeBtn.gameObject),
+                                "Close sound settings button cannot receive pointer input.");
                         }
                         finally
                         {
@@ -176,7 +188,7 @@ namespace LiarsBatting.Editor
 
         private static IEnumerator RunUpgradeTests(GameBootstrap game, GameAudio audio)
         {
-            foreach (var tests in new[] { AudioUpgradeTests.Run(game, audio), ResultRulesTests.Run(game) })
+            foreach (var tests in new[] { AudioUpgradeTests.Run(game, audio), AudioUpgradeTests.RunVoice(game, audio), ResultRulesTests.Run(game) })
             {
                 while (true)
                 {
@@ -219,14 +231,16 @@ namespace LiarsBatting.Editor
         {
             string[] keys =
             {
-                "lb_audio_music_volume", "lb_audio_effects_volume",
-                "lb_audio_music_muted", "lb_audio_effects_muted"
+                "lb_audio_music_volume", "lb_audio_effects_volume", "lb_audio_voice_volume",
+                "lb_audio_music_muted", "lb_audio_effects_muted", "lb_audio_voice_muted"
             };
             bool[] existed = keys.Select(PlayerPrefs.HasKey).ToArray();
             float music = GameAudio.MusicLevel;
             float effects = GameAudio.EffectsLevel;
+            float voice = GameAudio.VoiceLevel;
             bool musicMuted = GameAudio.MusicMuted;
             bool effectsMuted = GameAudio.EffectsMuted;
+            bool voiceMuted = GameAudio.VoiceMuted;
             var gainField = typeof(GameAudio).GetField("_musicGain", PrivateInstance);
             float originalGain = (float)gainField.GetValue(audio);
             var menu = (GameObject)typeof(GameBootstrap).GetField("_mainMenuScreen", PrivateInstance).GetValue(game);
@@ -236,7 +250,9 @@ namespace LiarsBatting.Editor
                 foreach (string key in keys) PlayerPrefs.DeleteKey(key);
                 typeof(GameAudio).GetMethod("Setup", PrivateInstance).Invoke(audio, null);
                 Require(Approximately(GameAudio.MusicLevel, 0.8f) && Approximately(GameAudio.EffectsLevel, 0.8f) &&
-                    !GameAudio.MusicMuted && !GameAudio.EffectsMuted, "Default audio settings are incorrect.");
+                    Approximately(GameAudio.VoiceLevel, 0.8f) &&
+                    !GameAudio.MusicMuted && !GameAudio.EffectsMuted && !GameAudio.VoiceMuted,
+                    "Default audio settings are incorrect.");
 
                 menu.SetActive(true);
                 var open = menu.GetComponentsInChildren<Button>(true)
@@ -248,54 +264,79 @@ namespace LiarsBatting.Editor
                 var toggles = dialog.GetComponentsInChildren<Toggle>(true);
                 var musicSlider = sliders.First(slider => slider.name == "MusicSlider");
                 var effectsSlider = sliders.First(slider => slider.name == "EffectsSlider");
+                var voiceSlider = sliders.First(slider => slider.name == "VoiceSlider");
                 var musicToggle = toggles.First(toggle => toggle.name == "MusicMute");
                 var effectsToggle = toggles.First(toggle => toggle.name == "EffectsMute");
-                Require(Approximately(musicSlider.value, 0.8f) && Approximately(effectsSlider.value, 0.8f),
+                var voiceToggle = toggles.First(toggle => toggle.name == "VoiceMute");
+                Require(Approximately(musicSlider.value, 0.8f) && Approximately(effectsSlider.value, 0.8f) &&
+                    Approximately(voiceSlider.value, 0.8f),
                     "Settings sliders did not show the saved levels.");
 
                 gainField.SetValue(audio, 0.28f);
                 musicSlider.value = 0.5f;
                 effectsSlider.value = 0.4f;
+                voiceSlider.value = 0.6f;
                 GameAudio.Play("SFX_Trust_Accept");
-                var effect = audio.GetComponents<AudioSource>().First(source =>
+                GameAudio.PlayVoice(HeroId.Hunter, VoiceCue.Select, 0f);
+                var allSources = audio.GetComponents<AudioSource>();
+                var effect = allSources.First(source =>
                     source.clip != null && source.clip.name == "SFX_Trust_Accept");
-                var musicSource = audio.GetComponents<AudioSource>()[0];
+                var voiceSource = allSources.First(source =>
+                    source.clip != null && source.clip.name == "VO_Hunter_Select_01");
+                var musicSource = allSources[0];
                 Require(Approximately(musicSource.volume, 0.28f * 0.5f) &&
-                    Approximately(effect.volume, 0.65f * 0.58f * 0.4f),
-                    "Independent levels or effect balancing were not applied.");
+                    Approximately(effect.volume, 0.65f * 0.58f * 0.4f) &&
+                    Approximately(voiceSource.volume, 0.85f * 0.6f),
+                    "Independent levels or effect/voice balancing were not applied.");
                 effectsSlider.value = 0.2f;
-                Require(Approximately(effect.volume, 0.65f * 0.58f * 0.2f),
-                    "Changing effects volume did not update a playing voice.");
+                voiceSlider.value = 0.3f;
+                Require(Approximately(effect.volume, 0.65f * 0.58f * 0.2f) &&
+                    Approximately(voiceSource.volume, 0.85f * 0.3f),
+                    "Changing effects or voice volume did not update a playing source.");
                 musicToggle.isOn = true;
-                Require(Approximately(musicSource.volume, 0f) && effect.volume > 0f,
-                    "Muting music affected effects.");
+                Require(Approximately(musicSource.volume, 0f) && effect.volume > 0f && voiceSource.volume > 0f,
+                    "Muting music affected effects or voice.");
                 effectsToggle.isOn = true;
-                Require(Approximately(effect.volume, 0f), "Muting effects did not update a playing voice.");
+                Require(Approximately(effect.volume, 0f) && voiceSource.volume > 0f,
+                    "Muting effects did not update a playing effect or affected voice.");
+                voiceToggle.isOn = true;
+                Require(Approximately(voiceSource.volume, 0f), "Muting voice did not silence the playing voice.");
                 musicToggle.isOn = false;
                 effectsToggle.isOn = false;
+                voiceToggle.isOn = false;
                 Require(Approximately(musicSource.volume, 0.28f * 0.5f) &&
-                    Approximately(effect.volume, 0.65f * 0.58f * 0.2f),
+                    Approximately(effect.volume, 0.65f * 0.58f * 0.2f) &&
+                    Approximately(voiceSource.volume, 0.85f * 0.3f),
                     "Unmuting did not restore the chosen levels.");
                 effectsToggle.isOn = true;
+                voiceToggle.isOn = true;
+                GameAudio.StopVoice();
                 var close = dialog.GetComponentsInChildren<Button>(true)
                     .First(button => button.name == "CloseSoundSettingsButton");
                 close.onClick.Invoke();
                 Require(!dialog.activeSelf, "Settings dialog did not close.");
                 typeof(GameAudio).GetMethod("Setup", PrivateInstance).Invoke(audio, null);
                 Require(Approximately(GameAudio.MusicLevel, 0.5f) &&
-                    Approximately(GameAudio.EffectsLevel, 0.2f) && GameAudio.EffectsMuted && !GameAudio.MusicMuted,
+                    Approximately(GameAudio.EffectsLevel, 0.2f) &&
+                    Approximately(GameAudio.VoiceLevel, 0.3f) &&
+                    GameAudio.EffectsMuted && GameAudio.VoiceMuted && !GameAudio.MusicMuted,
                     "Audio settings were not restored from PlayerPrefs.");
                 open.onClick.Invoke();
                 Require(Approximately(musicSlider.value, 0.5f) && Approximately(effectsSlider.value, 0.2f) &&
-                    effectsToggle.isOn && !musicToggle.isOn, "Reopened settings did not reflect saved values.");
+                    Approximately(voiceSlider.value, 0.3f) &&
+                    effectsToggle.isOn && voiceToggle.isOn && !musicToggle.isOn,
+                    "Reopened settings did not reflect saved values.");
                 close.onClick.Invoke();
             }
             finally
             {
+                GameAudio.StopVoice();
                 GameAudio.SetMusicLevel(music);
                 GameAudio.SetEffectsLevel(effects);
+                GameAudio.SetVoiceLevel(voice);
                 GameAudio.SetMusicMuted(musicMuted);
                 GameAudio.SetEffectsMuted(effectsMuted);
+                GameAudio.SetVoiceMuted(voiceMuted);
                 for (int i = 0; i < keys.Length; i++)
                     if (!existed[i]) PlayerPrefs.DeleteKey(keys[i]);
                 GameAudio.SaveSettings();
